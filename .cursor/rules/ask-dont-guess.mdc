@@ -1,0 +1,18 @@
+---
+description: Ask the user instead of guessing when anything is unclear
+alwaysApply: true
+---
+
+# Do not guess
+
+If you are unsure about requirements, intent, names, schema, credentials, architecture, or any missing detail, **ask the user**. Do not invent an answer or pick a default silently.
+
+- Ask a short, specific question before implementing.
+- If several options are valid, list them and wait for a choice.
+- Never fill in placeholders, credentials, business rules, or API shapes from assumption.
+- If a previous message could be read more than one way, confirm which reading is correct.
+
+```text
+❌ BAD: User says "add auth" → implement JWT + Google OAuth without asking
+✅ GOOD: Ask which providers, token type, and which routes are public
+```
