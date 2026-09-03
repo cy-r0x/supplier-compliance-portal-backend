@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { AuthModule } from './auth/auth.module';
+import { AuthModule } from './infrastructure/auth/auth.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggerInterceptor } from './common/interceptors/logger.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
