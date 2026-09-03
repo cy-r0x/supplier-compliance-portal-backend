@@ -7,6 +7,12 @@ export class HealthController {
   @Get()
   @ApiOperation({ summary: 'Health check' })
   health() {
-    return { status: 'ok' };
+    return {
+      message: 'Server is running',
+      data: {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+      },
+    };
   }
 }

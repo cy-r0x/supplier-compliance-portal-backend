@@ -16,21 +16,47 @@ export class ResponseInterceptor<T>
     next: CallHandler<T>,
   ): Observable<SuccessResponse<T>> {
     return next.handle().pipe(
-      map((data) => {
-        if (
-          data &&
-          typeof data === 'object' &&
-          'success' in data &&
-          'data' in data
-        ) {
-          return data as SuccessResponse<T>;
+      map((payload) => {
+        if (this.isSuccessEnvelope(payload)) {
+          return payload;
+        }
+
+        if (this.hasMessageAndData(payload)) {
+          return {
+            success: true,
+            message: payload.message,
+            data: payload.data,
+          };
         }
 
         return {
           success: true,
-          data,
+          message: 'Success',
+          data: payload,
         };
       }),
+    );
+  }
+
+  private isSuccessEnvelope(payload: unknown): payload is SuccessResponse<T> {
+    return (
+      !!payload &&
+      typeof payload === 'object' &&
+      'success' in payload &&
+      'message' in payload &&
+      'data' in payload
+    );
+  }
+
+  private hasMessageAndData(
+    payload: unknown,
+  ): payload is { message: string; data: T } {
+    return (
+      !!payload &&
+      typeof payload === 'object' &&
+      'message' in payload &&
+      'data' in payload &&
+      typeof (payload as { message: unknown }).message === 'string'
     );
   }
 }
