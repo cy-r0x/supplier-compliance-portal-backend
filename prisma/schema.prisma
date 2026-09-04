@@ -20,6 +20,38 @@ enum ProductStatus {
   APPROVED
 }
 
+enum DocumentType {
+  TEST_REPORT
+  DECLARATION_OF_CONFORMITY
+  MANUAL_OR_INSTRUCTIONS
+  CERTIFICATE
+  PRODUCT_IMAGE
+  SAFETY_IMAGE
+  REGULATORY_DOCUMENT
+  OTHER
+}
+
+enum FieldKey {
+  SAFETY_NOTICE_TEXT
+  WARNING_TEXT
+  AGE_GRADING
+  MATERIAL_INFORMATION
+  USAGE_RESTRICTIONS
+  SAFETY_INSTRUCTIONS
+  ADDITIONAL_NOTES
+  OTHER
+}
+
+enum RequirementLevel {
+  REQUIRED
+  OPTIONAL
+}
+
+enum DocumentVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 enum NotificationType {
   REQUEST_CREATED
   REQUEST_SUBMITTED
@@ -27,6 +59,7 @@ enum NotificationType {
   REQUEST_REJECTED
   REQUEST_MESSAGE
   REQUEST_DELETED
+  REQUEST_REQUIREMENTS_UPDATED
 }
 
 model User {
@@ -91,7 +124,9 @@ model Product {
   supplierId String
   supplier   User   @relation("ProductSupplier", fields: [supplierId], references: [id])
 
-  notifications Notification[]
+  notifications        Notification[]
+  documentRequirements ProductDocumentRequirement[]
+  fieldRequirements    ProductFieldRequirement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -100,6 +135,47 @@ model Product {
   @@index([distributorId])
   @@index([supplierId])
   @@map("products")
+}
+
+model ProductDocumentRequirement {
+  id         String             @id @default(uuid())
+  productId  String
+  product    Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type       DocumentType
+  customKey  String             @default("")
+  label      String?
+  level      RequirementLevel
+  visibility DocumentVisibility
+
+  fileUrl  String?
+  fileName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, type, customKey])
+  @@index([productId])
+  @@index([visibility])
+  @@map("productDocumentRequirements")
+}
+
+model ProductFieldRequirement {
+  id        String           @id @default(uuid())
+  productId String
+  product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  field     FieldKey
+  customKey String           @default("")
+  label     String?
+  level     RequirementLevel
+
+  value String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, field, customKey])
+  @@index([productId])
+  @@map("productFieldRequirements")
 }
 
 model Notification {
