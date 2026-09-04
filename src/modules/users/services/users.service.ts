@@ -16,13 +16,6 @@ const BCRYPT_ROUNDS = 10;
 export class UsersService {
   constructor(private readonly prisma: PrismaService, private readonly objectStorageService: ObjectStorageService) { }
 
-  findAll() {
-    return {
-      message: 'Users retrieved successfully',
-      data: [],
-    };
-  }
-
   async create(dto: CreateUserDto, currentUser: JwtPayload, photo?: Express.Multer.File) {
     this.assertCanCreateRole(dto.role, currentUser.role);
 

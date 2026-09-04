@@ -1,13 +1,16 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
 
-// @TODO: Implement file upload to object storage
+// @TODO: Replace stub with real object-storage upload
 @Injectable()
 export class ObjectStorageService {
-  constructor() { }
+  constructor() {}
 
-  async uploadFile(file: Express.Multer.File) {
-    const { buffer, originalname } = file;
-    const fileName = `${originalname}-${Date.now()}`;
-    return fileName;
+  /**
+   * Uploads a file and returns its public URL.
+   */
+  async uploadFile(file: Express.Multer.File): Promise<string> {
+    const key = `${Date.now()}-${file.originalname}`;
+    void file.buffer;
+    return `https://storage.local/${encodeURIComponent(key)}`;
   }
 }

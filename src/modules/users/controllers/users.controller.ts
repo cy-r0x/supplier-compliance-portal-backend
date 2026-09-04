@@ -29,12 +29,6 @@ import { UsersService } from '../services/users.service';
 export class UsersController {
   constructor(private readonly usersService: UsersService) { }
 
-  @Get()
-  @ApiOperation({ summary: 'List users' })
-  findAll() {
-    return this.usersService.findAll();
-  }
-
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.DISTRIBUTOR)
   @UseInterceptors(
