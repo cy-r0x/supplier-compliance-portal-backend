@@ -31,7 +31,7 @@ enum DocumentType {
   OTHER
 }
 
-enum FieldKey {
+enum FieldType {
   SAFETY_NOTICE_TEXT
   WARNING_TEXT
   AGE_GRADING
@@ -71,26 +71,39 @@ model User {
   photo    String?
 
   createdById  String?
-  createdBy    User?   @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers User[]  @relation("UserCreatedBy")
+  createdBy    User?  @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers User[] @relation("UserCreatedBy")
 
-  distributorId String?
-  distributor   User?   @relation("DistributorSuppliers", fields: [distributorId], references: [id])
-  suppliers     User[]  @relation("DistributorSuppliers")
+  requestedProducts ProductRequest[] @relation("ProductDistributor")
+  suppliedProducts  ProductRequest[] @relation("ProductSupplier")
 
-  requestedProducts Product[] @relation("ProductDistributor")
-  suppliedProducts  Product[] @relation("ProductSupplier")
-
-  createdNotifications  Notification[] @relation("NotificationCreator")
-  receivedNotifications Notification[] @relation("NotificationReceiver")
+  createdNotifications  Notification[]   @relation("NotificationCreator")
+  receivedNotifications Notification[]   @relation("NotificationReceiver")
+  sentMessages          ProductMessage[] @relation("MessageSender")
   refreshTokens         RefreshToken[]
+  settings              UserSettings?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([role])
-  @@index([distributorId])
   @@map("users")
+}
+
+/// Per-user preferences. Add new typed columns here as settings grow.
+model UserSettings {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// When true (DISTRIBUTOR): valid supplier submit auto-sets request to APPROVED
+  autoApproveProductRequests Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_settings")
 }
 
 model RefreshToken {
@@ -107,75 +120,136 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-model Product {
+/// Compliance product request (distributor/admin → supplier)
+model ProductRequest {
   id              String        @id @default(uuid())
   name            String
-  sku             String?       @unique
+  sku             String?
   photo           String?
   price           Decimal?      @db.Decimal(12, 2)
   status          ProductStatus @default(PENDING)
   rejectionReason String?
   publicSlug      String        @unique @default(uuid())
-  deletedAt       DateTime?
 
   distributorId String
-  distributor   User   @relation("ProductDistributor", fields: [distributorId], references: [id])
+  distributor   User   @relation("ProductDistributor", fields: [distributorId], references: [id], onDelete: Restrict)
 
   supplierId String
-  supplier   User   @relation("ProductSupplier", fields: [supplierId], references: [id])
+  supplier   User   @relation("ProductSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
 
   notifications        Notification[]
   documentRequirements ProductDocumentRequirement[]
   fieldRequirements    ProductFieldRequirement[]
+  messages             ProductMessage[]
+
+  isDeleted Boolean @default(false)
+
+  submittedAt           DateTime?
+  reviewedAt            DateTime?
+  requirementsUpdatedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([supplierId, isDeleted, status])
+  @@index([distributorId, isDeleted, status])
+  @@index([isDeleted, deletedAt])
+  @@index([status])
+  @@map("product_requests")
+}
+
+model ProductDocumentRequirement {
+  id String @id @default(uuid())
+
+  productRequestId String
+  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+
+  type      DocumentType
+  customKey String       @default("")
+  label     String?
+
+  level      RequirementLevel
+  visibility DocumentVisibility
+
+  document ProductDocument?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([status])
-  @@index([distributorId])
-  @@index([supplierId])
-  @@map("products")
+  @@unique([productRequestId, type, customKey])
+  @@index([productRequestId])
+  @@map("product_document_requirements")
 }
 
-model ProductDocumentRequirement {
-  id         String             @id @default(uuid())
-  productId  String
-  product    Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
-  type       DocumentType
+model ProductDocument {
+  id String @id @default(uuid())
+
+  requirementId String                     @unique
+  requirement   ProductDocumentRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  fileUrl  String
+  fileName String?
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("product_documents")
+}
+
+model ProductFieldRequirement {
+  id String @id @default(uuid())
+
+  productRequestId String
+  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+
+  fieldType  FieldType
   customKey  String             @default("")
   label      String?
   level      RequirementLevel
   visibility DocumentVisibility
 
-  fileUrl  String?
-  fileName String?
+  fieldValue ProductFieldValue?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([productId, type, customKey])
-  @@index([productId])
-  @@index([visibility])
-  @@map("productDocumentRequirements")
+  @@unique([productRequestId, fieldType, customKey])
+  @@index([productRequestId])
+  @@map("product_field_requirements")
 }
 
-model ProductFieldRequirement {
-  id        String           @id @default(uuid())
-  productId String
-  product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
-  field     FieldKey
-  customKey String           @default("")
-  label     String?
-  level     RequirementLevel
+model ProductFieldValue {
+  id String @id @default(uuid())
 
-  value String?
+  requirementId String                  @unique
+  requirement   ProductFieldRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  value String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([productId, field, customKey])
-  @@index([productId])
-  @@map("productFieldRequirements")
+  @@map("product_field_values")
+}
+
+model ProductMessage {
+  id String @id @default(uuid())
+
+  productRequestId String
+  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  body String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productRequestId, createdAt])
+  @@index([senderId])
+  @@map("product_messages")
 }
 
 model Notification {
@@ -183,21 +257,21 @@ model Notification {
   type    NotificationType
   title   String
   message String
-  read    Boolean          @default(false)
+  isRead  Boolean          @default(false)
 
-  productId String?
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productRequestId String?
+  productRequest   ProductRequest? @relation(fields: [productRequestId], references: [id], onDelete: SetNull)
 
   creatorId String
-  creator   User   @relation("NotificationCreator", fields: [creatorId], references: [id])
+  creator   User   @relation("NotificationCreator", fields: [creatorId], references: [id], onDelete: Restrict)
 
   receiverId String
-  receiver   User   @relation("NotificationReceiver", fields: [receiverId], references: [id])
+  receiver   User   @relation("NotificationReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([receiverId, read])
-  @@index([productId])
+  @@index([receiverId, isRead, createdAt])
+  @@index([productRequestId])
   @@map("notifications")
 }
