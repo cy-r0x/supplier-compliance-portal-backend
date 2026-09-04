@@ -1,0 +1,19 @@
+---
+description: Consult project skills before and during implementation to keep best practices
+alwaysApply: true
+---
+
+# Use skills when implementing
+
+Whenever you implement, change, or refactor something in this project, **go through the relevant skills in `.agents/skills/` first** and follow them so best practices stay intact.
+
+- Before writing code, identify which installed skills apply to the task (framework, routing, caching, data fetching, UI, tooling, etc.).
+- Read those skills' `SKILL.md` (and linked references when needed) and apply their guidance.
+- Prefer the skill's recommended patterns over improvising an equivalent approach.
+- If a skill conflicts with an explicit user instruction, ask before proceeding.
+- After implementing, quickly check that the change still matches the skill's constraints and recommended patterns.
+
+```text
+❌ BAD: Jump straight into coding a Next.js feature without reading applicable skills
+✅ GOOD: Scan .agents/skills, read the matching SKILL.md files, then implement accordingly
+```
