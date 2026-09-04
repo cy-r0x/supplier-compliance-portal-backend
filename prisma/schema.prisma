@@ -50,6 +50,7 @@ model User {
 
   createdNotifications  Notification[] @relation("NotificationCreator")
   receivedNotifications Notification[] @relation("NotificationReceiver")
+  refreshTokens         RefreshToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -57,6 +58,20 @@ model User {
   @@index([role])
   @@index([distributorId])
   @@map("users")
+}
+
+model RefreshToken {
+  id                String    @id @default(uuid())
+  tokenHash         String    @unique
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
 }
 
 model Product {
