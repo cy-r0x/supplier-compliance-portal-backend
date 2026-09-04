@@ -7,9 +7,9 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../prisma/prisma.service';
-import { LoginDto } from '../auth/dto/login.dto';
-import { JwtPayload } from '../auth/types/jwt-payload';
+import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import { LoginDto } from '../dto/login.dto';
+import { JwtPayload } from '../types/jwt-payload';
 
 export type AuthTokens = {
   accessToken: string;
