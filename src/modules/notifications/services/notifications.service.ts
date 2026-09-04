@@ -50,14 +50,12 @@ export class NotificationsService {
 
     return {
       message: 'Notifications retrieved successfully',
-      data: {
-        items,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit) || 0,
-        },
+      data: items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
       },
     };
   }

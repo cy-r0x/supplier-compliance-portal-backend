@@ -5,7 +5,16 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Observable, map } from 'rxjs';
-import { SuccessResponse } from '../interfaces/api-response.interface';
+import {
+  PaginationMeta,
+  SuccessResponse,
+} from '../interfaces/api-response.interface';
+
+type MessageDataPayload<T> = {
+  message: string;
+  data: T;
+  pagination?: PaginationMeta;
+};
 
 @Injectable()
 export class ResponseInterceptor<T>
@@ -26,6 +35,9 @@ export class ResponseInterceptor<T>
             success: true,
             message: payload.message,
             data: payload.data,
+            ...(payload.pagination
+              ? { pagination: payload.pagination }
+              : {}),
           };
         }
 
@@ -50,7 +62,7 @@ export class ResponseInterceptor<T>
 
   private hasMessageAndData(
     payload: unknown,
-  ): payload is { message: string; data: T } {
+  ): payload is MessageDataPayload<T> {
     return (
       !!payload &&
       typeof payload === 'object' &&

@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
+  Query,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -26,6 +28,7 @@ import {
 } from 'src/infrastructure/auth/decorators/auth.decorator';
 import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
 import { CreateProductRequestDto } from '../dto/create-product-request.dto';
+import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { ProductsService } from '../services/products.service';
 
 @ApiTags('products')
@@ -33,6 +36,19 @@ import { ProductsService } from '../services/products.service';
 @Controller('products')
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'List product requests',
+    description:
+      'Paginated list scoped to the current user role. Filter by status and search name/SKU. Each item includes required-answer progress.',
+  })
+  findAll(
+    @CurrentUser() currentUser: JwtPayload,
+    @Query() query: ListProductsQueryDto,
+  ) {
+    return this.productsService.findAll(currentUser, query);
+  }
 
   @Post()
   @Roles(Role.DISTRIBUTOR)

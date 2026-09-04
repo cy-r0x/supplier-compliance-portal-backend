@@ -10,8 +10,10 @@ import {
   NotificationType,
   Prisma,
   ProductStatus,
+  RequirementLevel,
   Role,
 } from '@prisma/client';
+import { getPagination, parseSortQuery } from 'src/common/utils/query.util';
 import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
 import { ObjectStorageService } from 'src/infrastructure/object-storage/services/object-storage.service';
 import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
@@ -20,7 +22,16 @@ import {
   DocumentRequirementDto,
   FieldRequirementDto,
 } from '../dto/create-product-request.dto';
+import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { parseDocumentPrefillFieldName } from '../utils/document-prefill-field.util';
+
+const PRODUCT_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'name',
+  'sku',
+  'status',
+] as const;
 
 @Injectable()
 export class ProductsService {
@@ -28,6 +39,104 @@ export class ProductsService {
     private readonly prisma: PrismaService,
     private readonly objectStorageService: ObjectStorageService,
   ) {}
+
+  async findAll(currentUser: JwtPayload, query: ListProductsQueryDto) {
+    const { page, limit, skip } = getPagination(query);
+    const orderBy = parseSortQuery(query.sort, PRODUCT_SORT_FIELDS);
+
+    const where: Prisma.ProductRequestWhereInput = {
+      isDeleted: false,
+      ...this.scopeWhereForRole(currentUser),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                sku: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.productRequest.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          photo: true,
+          price: true,
+          status: true,
+          publicSlug: true,
+          updatedAt: true,
+          createdAt: true,
+          distributor: {
+            select: { id: true, name: true, email: true },
+          },
+          supplier: {
+            select: { id: true, name: true, email: true },
+          },
+          documentRequirements: {
+            where: { level: RequirementLevel.REQUIRED },
+            select: {
+              id: true,
+              document: { select: { id: true } },
+            },
+          },
+          fieldRequirements: {
+            where: { level: RequirementLevel.REQUIRED },
+            select: {
+              id: true,
+              fieldValue: { select: { id: true, value: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.productRequest.count({ where }),
+    ]);
+
+    const items = rows.map((row) => {
+      const {
+        documentRequirements,
+        fieldRequirements,
+        ...product
+      } = row;
+      const progress = this.computeRequiredProgress(
+        documentRequirements,
+        fieldRequirements,
+      );
+
+      return {
+        ...product,
+        progress,
+      };
+    });
+
+    return {
+      message: 'Products retrieved successfully',
+      data: items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
+      },
+    };
+  }
 
   async create(
     dto: CreateProductRequestDto,
@@ -223,6 +332,40 @@ export class ProductsService {
       level: row.level,
       visibility: row.visibility,
     };
+  }
+
+  private scopeWhereForRole(
+    currentUser: JwtPayload,
+  ): Prisma.ProductRequestWhereInput {
+    if (currentUser.role === Role.DISTRIBUTOR) {
+      return { distributorId: currentUser.sub };
+    }
+    if (currentUser.role === Role.SUPPLIER) {
+      return { supplierId: currentUser.sub };
+    }
+    // SUPER_ADMIN sees all non-deleted (caller already sets isDeleted)
+    return {};
+  }
+
+  private computeRequiredProgress(
+    documentRequirements: Array<{ document: { id: string } | null }>,
+    fieldRequirements: Array<{
+      fieldValue: { id: string; value: string } | null;
+    }>,
+  ): { completed: number; total: number; percent: number } {
+    const docsCompleted = documentRequirements.filter(
+      (row) => row.document != null,
+    ).length;
+    const fieldsCompleted = fieldRequirements.filter(
+      (row) => Boolean(row.fieldValue?.value?.trim()),
+    ).length;
+
+    const completed = docsCompleted + fieldsCompleted;
+    const total = documentRequirements.length + fieldRequirements.length;
+    const percent =
+      total === 0 ? 100 : Math.round((completed / total) * 100);
+
+    return { completed, total, percent };
   }
 
   private assertRequirementKeys(
