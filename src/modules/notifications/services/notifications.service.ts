@@ -23,7 +23,12 @@ export class NotificationsService {
       ...(query.unreadOnly === true ? { isRead: false } : {}),
     };
 
-    const [items, total] = await this.prisma.$transaction([
+    const unreadWhere: Prisma.NotificationWhereInput = {
+      receiverId: currentUser.sub,
+      isRead: false,
+    };
+
+    const [items, total, unreadCount] = await this.prisma.$transaction([
       this.prisma.notification.findMany({
         where,
         orderBy,
@@ -46,11 +51,15 @@ export class NotificationsService {
         },
       }),
       this.prisma.notification.count({ where }),
+      this.prisma.notification.count({ where: unreadWhere }),
     ]);
 
     return {
       message: 'Notifications retrieved successfully',
-      data: items,
+      data: {
+        items,
+        unreadCount,
+      },
       pagination: {
         page,
         limit,
