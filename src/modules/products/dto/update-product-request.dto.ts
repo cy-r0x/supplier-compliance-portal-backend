@@ -1,5 +1,19 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { TransformOptionalNumber } from 'src/common/transforms/optional-number.transform';
+import {
+  DocumentRequirementDto,
+  FieldRequirementDto,
+  parseJsonDtoArray,
+} from './create-product-request.dto';
 
 export class UpdateProductRequestDto {
   @ApiPropertyOptional({ example: 'Widget Pro' })
@@ -15,6 +29,33 @@ export class UpdateProductRequestDto {
 
   @ApiPropertyOptional({ example: 19.99 })
   @IsOptional()
+  @TransformOptionalNumber()
   @IsNumber({ maxDecimalPlaces: 2 })
   price?: number;
+
+  @ApiPropertyOptional({
+    type: [DocumentRequirementDto],
+    description:
+      'When provided with fieldRequirements, updates the ask matrix while PENDING.',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    parseJsonDtoArray(DocumentRequirementDto, { value }),
+  )
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DocumentRequirementDto)
+  documentRequirements?: DocumentRequirementDto[];
+
+  @ApiPropertyOptional({
+    type: [FieldRequirementDto],
+    description:
+      'When provided with documentRequirements, updates the ask matrix while PENDING.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => parseJsonDtoArray(FieldRequirementDto, { value }))
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FieldRequirementDto)
+  fieldRequirements?: FieldRequirementDto[];
 }

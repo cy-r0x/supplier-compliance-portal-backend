@@ -5,7 +5,8 @@ import {
   FieldType,
   RequirementLevel,
 } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
+import { Transform, Type, plainToInstance } from 'class-transformer';
+import { TransformOptionalNumber } from 'src/common/transforms/optional-number.transform';
 import {
   IsArray,
   IsEnum,
@@ -30,6 +31,17 @@ function parseJsonArray({ value }: { value: unknown }) {
     }
   }
   return value;
+}
+
+export function parseJsonDtoArray<T extends object>(
+  cls: new () => T,
+  { value }: { value: unknown },
+): T[] {
+  const parsed = parseJsonArray({ value });
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return plainToInstance(cls, parsed);
 }
 
 export class FieldPrefillDto {
@@ -126,7 +138,7 @@ export class CreateProductRequestDto {
 
   @ApiPropertyOptional({ example: 19.99 })
   @IsOptional()
-  @Type(() => Number)
+  @TransformOptionalNumber()
   @IsNumber({ maxDecimalPlaces: 2 })
   price?: number;
 
@@ -142,7 +154,9 @@ export class CreateProductRequestDto {
     description:
       'Ask matrix for documents. When using multipart, send as a JSON string. Prefill files separately as docPrefill__{TYPE} or docPrefill__OTHER__{customKey}.',
   })
-  @Transform(parseJsonArray)
+  @Transform(({ value }) =>
+    parseJsonDtoArray(DocumentRequirementDto, { value }),
+  )
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => DocumentRequirementDto)
@@ -153,7 +167,7 @@ export class CreateProductRequestDto {
     description:
       'Ask matrix for fields. When using multipart, send as a JSON string.',
   })
-  @Transform(parseJsonArray)
+  @Transform(({ value }) => parseJsonDtoArray(FieldRequirementDto, { value }))
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => FieldRequirementDto)

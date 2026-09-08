@@ -46,6 +46,7 @@ export class NotificationsService {
             select: {
               id: true,
               name: true,
+              photo: true,
             },
           },
         },
