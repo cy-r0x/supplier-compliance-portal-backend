@@ -6,12 +6,12 @@ import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
 export class PublicService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getPublicData(publicSlug: string) {
+  async getPublicData(publicSlugOrId: string) {
     const product = await this.prisma.productRequest.findFirst({
       where: {
-        publicSlug,
         isDeleted: false,
         status: ProductStatus.APPROVED,
+        OR: [{ publicSlug: publicSlugOrId }, { id: publicSlugOrId }],
       },
       select: {
         name: true,

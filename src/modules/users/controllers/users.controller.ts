@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -43,6 +44,12 @@ export class UsersController {
     @Query() query: ListUsersQueryDto,
   ) {
     return this.usersService.findAll(currentUser, query);
+  }
+
+  @Get('me')
+  @ApiOperation({ summary: 'Get current user profile' })
+  getMe(@CurrentUser() currentUser: JwtPayload) {
+    return this.usersService.getMe(currentUser);
   }
 
   @Post()
@@ -88,5 +95,36 @@ export class UsersController {
     @UploadedFile() photo?: Express.Multer.File,
   ) {
     return await this.usersService.create(createUserDto, currentUser, photo);
+  }
+
+  @Patch('me/photo')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Update current user profile photo',
+    description: 'Any authenticated user can upload a new profile photo.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['photo'],
+      properties: {
+        photo: {
+          type: 'string',
+          format: 'binary',
+          description: 'Profile photo image file',
+        },
+      },
+    },
+  })
+  async updateMyPhoto(
+    @CurrentUser() currentUser: JwtPayload,
+    @UploadedFile() photo: Express.Multer.File,
+  ) {
+    return await this.usersService.updateMyPhoto(currentUser, photo);
   }
 }

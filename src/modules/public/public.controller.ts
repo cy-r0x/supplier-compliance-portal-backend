@@ -10,8 +10,10 @@ export class PublicController {
 
   @Get(':publicSlug')
   @Public()
-  @ApiOperation({ summary: 'Get approved public product page data by slug' })
-  getData(@Param('publicSlug') publicSlug: string) {
-    return this.publicService.getPublicData(publicSlug);
+  @ApiOperation({
+    summary: 'Get approved public product page data by public slug or product id',
+  })
+  getData(@Param('publicSlug') publicSlugOrId: string) {
+    return this.publicService.getPublicData(publicSlugOrId);
   }
 }

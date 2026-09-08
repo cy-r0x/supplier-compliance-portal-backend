@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -97,6 +98,24 @@ export class UsersService {
     };
   }
 
+  async getMe(currentUser: JwtPayload) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: currentUser.sub },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        photo: true,
+      },
+    });
+
+    return {
+      message: 'Profile retrieved successfully',
+      data: user,
+    };
+  }
+
   async create(dto: CreateUserDto, currentUser: JwtPayload, photo?: Express.Multer.File) {
     this.assertCanCreateRole(dto.role, currentUser.role);
 
@@ -145,6 +164,35 @@ export class UsersService {
         dto.role === Role.DISTRIBUTOR
           ? 'Distributor created'
           : 'Supplier created',
+      data: user,
+    };
+  }
+
+  async updateMyPhoto(currentUser: JwtPayload, photo: Express.Multer.File) {
+    if (!photo) {
+      throw new BadRequestException('Photo file is required');
+    }
+
+    if (!photo.mimetype?.startsWith('image/')) {
+      throw new BadRequestException('Only image files are allowed');
+    }
+
+    const photoUrl = await this.objectStorageService.uploadFile(photo);
+
+    const user = await this.prisma.user.update({
+      where: { id: currentUser.sub },
+      data: { photo: photoUrl },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        photo: true,
+      },
+    });
+
+    return {
+      message: 'Profile photo updated successfully',
       data: user,
     };
   }
