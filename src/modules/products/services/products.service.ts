@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,9 @@ import {
   FieldRequirementDto,
 } from '../dto/create-product-request.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
+import { RejectProductDto } from '../dto/reject-product.dto';
+import { SubmitProductDto } from '../dto/submit-product.dto';
+import { UpdateProductRequestDto } from '../dto/update-product-request.dto';
 import { parseDocumentPrefillFieldName } from '../utils/document-prefill-field.util';
 
 const PRODUCT_SORT_FIELDS = [
@@ -312,6 +316,508 @@ export class ProductsService {
     };
   }
 
+  async findOne(id: string, currentUser: JwtPayload) {
+    const product = await this.loadProductDetail(id);
+    this.assertPartyAccess(product, currentUser);
+
+    const progress = this.computeRequiredProgress(
+      product.documentRequirements.filter(
+        (row) => row.level === RequirementLevel.REQUIRED,
+      ),
+      product.fieldRequirements.filter(
+        (row) => row.level === RequirementLevel.REQUIRED,
+      ),
+    );
+
+    const { documentRequirements, fieldRequirements, ...rest } = product;
+
+    return {
+      message: 'Product retrieved successfully',
+      data: {
+        ...rest,
+        progress,
+        documentRequirements: documentRequirements.map((row) => ({
+          id: row.id,
+          type: row.type,
+          customKey: row.customKey,
+          label: row.label,
+          level: row.level,
+          visibility: row.visibility,
+          document: row.document
+            ? { fileUrl: row.document.fileUrl, fileName: row.document.fileName }
+            : null,
+        })),
+        fieldRequirements: fieldRequirements.map((row) => ({
+          id: row.id,
+          fieldType: row.fieldType,
+          customKey: row.customKey,
+          label: row.label,
+          level: row.level,
+          visibility: row.visibility,
+          fieldValue: row.fieldValue ? { value: row.fieldValue.value } : null,
+        })),
+      },
+    };
+  }
+
+  async update(
+    id: string,
+    dto: UpdateProductRequestDto,
+    currentUser: JwtPayload,
+    files: Express.Multer.File[],
+  ) {
+    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+
+    if (product.status !== ProductStatus.PENDING) {
+      throw new BadRequestException('Only PENDING requests can be updated');
+    }
+
+    const photo = files.find((file) => file.fieldname === 'photo');
+    let photoUrl = product.photo;
+    if (photo) {
+      photoUrl = await this.objectStorageService.uploadFile(photo);
+    }
+
+    const sku = dto.sku !== undefined ? (dto.sku.trim() || null) : product.sku;
+    if (sku && sku !== product.sku) {
+      const existingSku = await this.prisma.productRequest.findFirst({
+        where: { sku, isDeleted: false, id: { not: id } },
+        select: { id: true },
+      });
+      if (existingSku) {
+        throw new ConflictException(
+          'A non-deleted product request with this SKU already exists',
+        );
+      }
+    }
+
+    await this.prisma.productRequest.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.sku !== undefined ? { sku } : {}),
+        ...(dto.price !== undefined
+          ? { price: new Prisma.Decimal(dto.price) }
+          : {}),
+        ...(photo ? { photo: photoUrl } : {}),
+      },
+    });
+
+    return { message: 'Product updated successfully', data: null };
+  }
+
+  async remove(id: string, currentUser: JwtPayload) {
+    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productRequest.update({
+        where: { id },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          type: NotificationType.REQUEST_DELETED,
+          title: 'Request deleted',
+          message: `${currentUser.name} deleted the compliance request for ${product.name}`,
+          creatorId: currentUser.sub,
+          receiverId: product.supplierId,
+          productRequestId: product.id,
+        },
+      });
+    });
+
+    return { message: 'Product deleted successfully', data: null };
+  }
+
+  async submit(
+    id: string,
+    dto: SubmitProductDto,
+    currentUser: JwtPayload,
+    files: Express.Multer.File[],
+  ) {
+    const product = await this.prisma.productRequest.findFirst({
+      where: { id, isDeleted: false },
+      include: {
+        documentRequirements: { include: { document: true } },
+        fieldRequirements: { include: { fieldValue: true } },
+        distributor: {
+          select: {
+            id: true,
+            settings: { select: { autoApproveProductRequests: true } },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    if (product.supplierId !== currentUser.sub) {
+      throw new ForbiddenException('Only the assigned supplier can submit');
+    }
+
+    if (product.status !== ProductStatus.PENDING) {
+      throw new BadRequestException('Only PENDING requests can be submitted');
+    }
+
+    const fieldValues = this.parseFieldValues(dto.fieldValues);
+    const docFiles = files.filter((file) => file.fieldname.startsWith('doc__'));
+
+    for (const requirement of product.documentRequirements) {
+      const file = docFiles.find(
+        (f) => f.fieldname === `doc__${requirement.id}`,
+      );
+      if (file) {
+        const fileUrl = await this.objectStorageService.uploadFile(file);
+        if (requirement.document) {
+          await this.prisma.productDocument.update({
+            where: { id: requirement.document.id },
+            data: { fileUrl, fileName: file.originalname },
+          });
+        } else {
+          await this.prisma.productDocument.create({
+            data: {
+              requirementId: requirement.id,
+              fileUrl,
+              fileName: file.originalname,
+            },
+          });
+        }
+      }
+    }
+
+    for (const entry of fieldValues) {
+      const requirement = product.fieldRequirements.find(
+        (row) => row.id === entry.requirementId,
+      );
+      if (!requirement) {
+        throw new BadRequestException(
+          `Unknown field requirement: ${entry.requirementId}`,
+        );
+      }
+      const value = entry.value?.trim() ?? '';
+      if (requirement.fieldValue) {
+        await this.prisma.productFieldValue.update({
+          where: { id: requirement.fieldValue.id },
+          data: { value },
+        });
+      } else if (value) {
+        await this.prisma.productFieldValue.create({
+          data: { requirementId: requirement.id, value },
+        });
+      }
+    }
+
+    const refreshed = await this.prisma.productRequest.findFirst({
+      where: { id },
+      include: {
+        documentRequirements: { include: { document: true } },
+        fieldRequirements: { include: { fieldValue: true } },
+        distributor: {
+          select: {
+            id: true,
+            settings: { select: { autoApproveProductRequests: true } },
+          },
+        },
+      },
+    });
+
+    if (!refreshed) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    this.assertSubmissionComplete(refreshed);
+
+    const autoApprove =
+      refreshed.distributor.settings?.autoApproveProductRequests ?? false;
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productRequest.update({
+        where: { id },
+        data: {
+          status: autoApprove ? ProductStatus.APPROVED : ProductStatus.SUBMITTED,
+          submittedAt: now,
+          ...(autoApprove ? { reviewedAt: now, rejectionReason: null } : {}),
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          type: NotificationType.REQUEST_SUBMITTED,
+          title: 'Request submitted for review',
+          message: `${currentUser.name} submitted compliance for ${refreshed.name}`,
+          creatorId: currentUser.sub,
+          receiverId: refreshed.distributorId,
+          productRequestId: refreshed.id,
+        },
+      });
+
+      if (autoApprove) {
+        await tx.notification.create({
+          data: {
+            type: NotificationType.REQUEST_APPROVED,
+            title: 'Request approved',
+            message: `Compliance for ${refreshed.name} was auto-approved`,
+            creatorId: currentUser.sub,
+            receiverId: refreshed.supplierId,
+            productRequestId: refreshed.id,
+          },
+        });
+      }
+    });
+
+    return {
+      message: autoApprove
+        ? 'Request submitted and approved'
+        : 'Request submitted successfully',
+      data: null,
+    };
+  }
+
+  async approve(id: string, currentUser: JwtPayload) {
+    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+
+    if (product.status !== ProductStatus.SUBMITTED) {
+      throw new BadRequestException('Only SUBMITTED requests can be approved');
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productRequest.update({
+        where: { id },
+        data: {
+          status: ProductStatus.APPROVED,
+          reviewedAt: now,
+          rejectionReason: null,
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          type: NotificationType.REQUEST_APPROVED,
+          title: 'Request approved',
+          message: `${currentUser.name} approved compliance for ${product.name}`,
+          creatorId: currentUser.sub,
+          receiverId: product.supplierId,
+          productRequestId: product.id,
+        },
+      });
+    });
+
+    return { message: 'Product approved successfully', data: null };
+  }
+
+  async reject(
+    id: string,
+    dto: RejectProductDto,
+    currentUser: JwtPayload,
+  ) {
+    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+
+    if (product.status !== ProductStatus.SUBMITTED) {
+      throw new BadRequestException('Only SUBMITTED requests can be rejected');
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productRequest.update({
+        where: { id },
+        data: {
+          status: ProductStatus.REJECTED,
+          reviewedAt: now,
+          rejectionReason: dto.rejectionReason.trim(),
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          type: NotificationType.REQUEST_REJECTED,
+          title: 'Request rejected',
+          message: `${currentUser.name} rejected compliance for ${product.name}`,
+          creatorId: currentUser.sub,
+          receiverId: product.supplierId,
+          productRequestId: product.id,
+        },
+      });
+    });
+
+    return { message: 'Product rejected successfully', data: null };
+  }
+
+  private async loadProductDetail(id: string) {
+    const product = await this.prisma.productRequest.findFirst({
+      where: { id, isDeleted: false },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        photo: true,
+        price: true,
+        status: true,
+        publicSlug: true,
+        submittedAt: true,
+        reviewedAt: true,
+        rejectionReason: true,
+        createdAt: true,
+        updatedAt: true,
+        distributorId: true,
+        supplierId: true,
+        distributor: { select: { id: true, name: true, email: true } },
+        supplier: { select: { id: true, name: true, email: true } },
+        documentRequirements: {
+          select: {
+            id: true,
+            type: true,
+            customKey: true,
+            label: true,
+            level: true,
+            visibility: true,
+            document: { select: { fileUrl: true, fileName: true } },
+          },
+        },
+        fieldRequirements: {
+          select: {
+            id: true,
+            fieldType: true,
+            customKey: true,
+            label: true,
+            level: true,
+            visibility: true,
+            fieldValue: { select: { value: true } },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    return product;
+  }
+
+  private async getOwnedProduct(
+    id: string,
+    currentUser: JwtPayload,
+    ownerRole: 'DISTRIBUTOR',
+  ) {
+    const product = await this.prisma.productRequest.findFirst({
+      where: { id, isDeleted: false },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        photo: true,
+        status: true,
+        distributorId: true,
+        supplierId: true,
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    if (currentUser.role === Role.SUPER_ADMIN) {
+      return product;
+    }
+
+    if (
+      ownerRole === 'DISTRIBUTOR' &&
+      currentUser.role === Role.DISTRIBUTOR &&
+      product.distributorId === currentUser.sub
+    ) {
+      return product;
+    }
+
+    throw new ForbiddenException('You do not have access to this product request');
+  }
+
+  private assertPartyAccess(
+    product: { distributorId: string; supplierId: string },
+    currentUser: JwtPayload,
+  ) {
+    if (currentUser.role === Role.SUPER_ADMIN) {
+      return;
+    }
+    if (
+      currentUser.role === Role.DISTRIBUTOR &&
+      product.distributorId === currentUser.sub
+    ) {
+      return;
+    }
+    if (
+      currentUser.role === Role.SUPPLIER &&
+      product.supplierId === currentUser.sub
+    ) {
+      return;
+    }
+    throw new ForbiddenException('You do not have access to this product request');
+  }
+
+  private parseFieldValues(
+    raw?: string,
+  ): Array<{ requirementId: string; value: string }> {
+    if (!raw?.trim()) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<{
+        requirementId?: string;
+        value?: string;
+      }>;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid fieldValues');
+      }
+      return parsed
+        .filter((row) => typeof row.requirementId === 'string')
+        .map((row) => ({
+          requirementId: row.requirementId!,
+          value: typeof row.value === 'string' ? row.value : '',
+        }));
+    } catch {
+      throw new BadRequestException('fieldValues must be a valid JSON array');
+    }
+  }
+
+  private assertSubmissionComplete(product: {
+    documentRequirements: Array<{
+      level: RequirementLevel;
+      document: { fileUrl: string } | null;
+    }>;
+    fieldRequirements: Array<{
+      level: RequirementLevel;
+      fieldValue: { value: string } | null;
+    }>;
+  }) {
+    for (const row of product.documentRequirements) {
+      if (row.level === RequirementLevel.REQUIRED && !row.document?.fileUrl) {
+        throw new BadRequestException(
+          'All required documents must be uploaded before submit',
+        );
+      }
+    }
+
+    for (const row of product.fieldRequirements) {
+      if (
+        row.level === RequirementLevel.REQUIRED &&
+        !row.fieldValue?.value?.trim()
+      ) {
+        throw new BadRequestException(
+          'All required fields must be filled before submit',
+        );
+      }
+    }
+  }
+
   private toDocumentRequirementCreate(row: DocumentRequirementDto) {
     const isOther = row.type === DocumentType.OTHER;
     return {
@@ -348,10 +854,8 @@ export class ProductsService {
   }
 
   private computeRequiredProgress(
-    documentRequirements: Array<{ document: { id: string } | null }>,
-    fieldRequirements: Array<{
-      fieldValue: { id: string; value: string } | null;
-    }>,
+    documentRequirements: Array<{ document: unknown | null }>,
+    fieldRequirements: Array<{ fieldValue: { value?: string } | null }>,
   ): { completed: number; total: number; percent: number } {
     const docsCompleted = documentRequirements.filter(
       (row) => row.document != null,

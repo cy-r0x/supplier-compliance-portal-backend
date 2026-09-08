@@ -1,7 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UploadedFiles,
@@ -29,6 +33,9 @@ import {
 import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
 import { CreateProductRequestDto } from '../dto/create-product-request.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
+import { RejectProductDto } from '../dto/reject-product.dto';
+import { SubmitProductDto } from '../dto/submit-product.dto';
+import { UpdateProductRequestDto } from '../dto/update-product-request.dto';
 import { ProductsService } from '../services/products.service';
 
 @ApiTags('products')
@@ -128,5 +135,84 @@ export class ProductsController {
       currentUser,
       files ?? [],
     );
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get product request detail' })
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser: JwtPayload,
+  ) {
+    return this.productsService.findOne(id, currentUser);
+  }
+
+  @Patch(':id')
+  @Roles(Role.DISTRIBUTOR)
+  @UseInterceptors(
+    AnyFilesInterceptor({
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Update product request metadata while PENDING' })
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateProductRequestDto,
+    @CurrentUser() currentUser: JwtPayload,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.productsService.update(id, dto, currentUser, files ?? []);
+  }
+
+  @Delete(':id')
+  @Roles(Role.DISTRIBUTOR)
+  @ApiOperation({ summary: 'Soft-delete product request' })
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser: JwtPayload,
+  ) {
+    return this.productsService.remove(id, currentUser);
+  }
+
+  @Post(':id/submit')
+  @Roles(Role.SUPPLIER)
+  @UseInterceptors(
+    AnyFilesInterceptor({
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Submit compliance documents and fields',
+    description: 'Files: doc__{requirementId}. Body: fieldValues JSON array.',
+  })
+  submit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SubmitProductDto,
+    @CurrentUser() currentUser: JwtPayload,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.productsService.submit(id, dto, currentUser, files ?? []);
+  }
+
+  @Post(':id/approve')
+  @Roles(Role.DISTRIBUTOR)
+  @ApiOperation({ summary: 'Approve submitted product request' })
+  approve(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() currentUser: JwtPayload,
+  ) {
+    return this.productsService.approve(id, currentUser);
+  }
+
+  @Post(':id/reject')
+  @Roles(Role.DISTRIBUTOR)
+  @ApiOperation({ summary: 'Reject submitted product request' })
+  reject(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectProductDto,
+    @CurrentUser() currentUser: JwtPayload,
+  ) {
+    return this.productsService.reject(id, dto, currentUser);
   }
 }

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -21,6 +22,7 @@ import {
 } from 'src/infrastructure/auth/decorators/auth.decorator';
 import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
 import { CreateUserDto } from '../dto/create-user.dto';
+import { ListUsersQueryDto } from '../dto/list-users-query.dto';
 import { UsersService } from '../services/users.service';
 
 @ApiTags('users')
@@ -28,6 +30,20 @@ import { UsersService } from '../services/users.service';
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) { }
+
+  @Get()
+  @Roles(Role.SUPER_ADMIN, Role.DISTRIBUTOR)
+  @ApiOperation({
+    summary: 'List users',
+    description:
+      'SUPER_ADMIN: all distributors/suppliers (optional role filter). DISTRIBUTOR: suppliers only.',
+  })
+  findAll(
+    @CurrentUser() currentUser: JwtPayload,
+    @Query() query: ListUsersQueryDto,
+  ) {
+    return this.usersService.findAll(currentUser, query);
+  }
 
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.DISTRIBUTOR)
