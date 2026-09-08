@@ -2,6 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { DocumentVisibility, ProductStatus } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
 
+const PUBLIC_STATUSES: ProductStatus[] = [
+  ProductStatus.SUBMITTED,
+  ProductStatus.APPROVED,
+  ProductStatus.REJECTED,
+];
+
 @Injectable()
 export class PublicService {
   constructor(private readonly prisma: PrismaService) {}
@@ -10,13 +16,15 @@ export class PublicService {
     const product = await this.prisma.productRequest.findFirst({
       where: {
         isDeleted: false,
-        status: ProductStatus.APPROVED,
+        status: { in: PUBLIC_STATUSES },
         OR: [{ publicSlug: publicSlugOrId }, { id: publicSlugOrId }],
       },
       select: {
         name: true,
-        photo: true,
+        status: true,
+        submittedAt: true,
         reviewedAt: true,
+        rejectionReason: true,
         supplier: { select: { name: true } },
         documentRequirements: {
           where: { visibility: DocumentVisibility.PUBLIC },
@@ -66,9 +74,11 @@ export class PublicService {
       message: 'Public product retrieved successfully',
       data: {
         name: product.name,
-        photo: product.photo,
+        status: product.status,
         supplierName: product.supplier.name,
-        approvedAt: product.reviewedAt,
+        submittedAt: product.submittedAt,
+        reviewedAt: product.reviewedAt,
+        rejectionReason: product.rejectionReason,
         documents,
         textFields,
       },
