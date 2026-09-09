@@ -235,6 +235,16 @@ export class ProductsService {
         });
       }
 
+      const productImagePrefill = uploadedPrefills.get(
+        `${DocumentType.PRODUCT_IMAGE}::`,
+      );
+      if (productImagePrefill) {
+        await tx.productRequest.update({
+          where: { id: productRequest.id },
+          data: { photo: productImagePrefill.fileUrl },
+        });
+      }
+
       for (const row of dto.fieldRequirements) {
         if (!row.prefill) {
           continue;
@@ -437,6 +447,16 @@ export class ProductsService {
             uploadedPrefills,
             existingRequirements,
           );
+        }
+
+        const productImagePrefill = uploadedPrefills.get(
+          `${DocumentType.PRODUCT_IMAGE}::`,
+        );
+        if (productImagePrefill) {
+          await tx.productRequest.update({
+            where: { id },
+            data: { photo: productImagePrefill.fileUrl },
+          });
         }
 
         if (requirementLevelsChanged) {
@@ -963,6 +983,19 @@ export class ProductsService {
     if (documentsToCreate.length > 0) {
       await this.prisma.productDocument.createMany({
         data: documentsToCreate,
+      });
+    }
+
+    const productImageRequirement = product.documentRequirements.find(
+      (row) => row.type === DocumentType.PRODUCT_IMAGE,
+    );
+    const productImageUpload = productImageRequirement
+      ? uploadedByRequirementId.get(productImageRequirement.id)
+      : undefined;
+    if (productImageUpload) {
+      await this.prisma.productRequest.update({
+        where: { id },
+        data: { photo: productImageUpload.fileUrl },
       });
     }
 
