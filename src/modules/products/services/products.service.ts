@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   DocumentType,
+  DocumentVisibility,
   FieldType,
   NotificationType,
   Prisma,
@@ -373,11 +374,6 @@ export class ProductsService {
     }
 
     const photo = files.find((file) => file.fieldname === 'photo');
-    let photoUrl = product.photo;
-    if (photo) {
-      photoUrl = await this.objectStorageService.uploadFile(photo);
-    }
-
     const sku = dto.sku !== undefined ? (dto.sku.trim() || null) : product.sku;
     if (sku && sku !== product.sku) {
       const existingSku = await this.prisma.productRequest.findFirst({
@@ -402,73 +398,106 @@ export class ProductsService {
       );
     }
 
-    const uploadedPrefills = hasRequirementUpdate
-      ? await this.uploadDocumentPrefills(
-          dto.documentRequirements!,
-          files.filter((file) => file.fieldname.startsWith('docPrefill__')),
-        )
-      : new Map<string, { fileUrl: string; fileName: string }>();
+    const [photoUrl, uploadedPrefills, existingRequirements] =
+      await Promise.all([
+        photo
+          ? this.objectStorageService.uploadFile(photo)
+          : Promise.resolve(product.photo),
+        hasRequirementUpdate
+          ? this.uploadDocumentPrefills(
+              dto.documentRequirements!,
+              files.filter((file) => file.fieldname.startsWith('docPrefill__')),
+            )
+          : Promise.resolve(
+              new Map<string, { fileUrl: string; fileName: string }>(),
+            ),
+        hasRequirementUpdate
+          ? this.prisma.productRequest.findUnique({
+              where: { id },
+              select: {
+                documentRequirements: {
+                  select: {
+                    id: true,
+                    type: true,
+                    customKey: true,
+                    label: true,
+                    level: true,
+                    visibility: true,
+                    document: { select: { id: true } },
+                  },
+                },
+                fieldRequirements: {
+                  select: {
+                    id: true,
+                    fieldType: true,
+                    customKey: true,
+                    label: true,
+                    level: true,
+                    visibility: true,
+                    fieldValue: { select: { id: true, value: true } },
+                  },
+                },
+              },
+            })
+          : Promise.resolve(null),
+      ]);
 
-    const existingRequirementLevels = hasRequirementUpdate
-      ? await this.prisma.productRequest.findUnique({
-          where: { id },
-          select: {
-            documentRequirements: {
-              select: { type: true, customKey: true, level: true },
-            },
-            fieldRequirements: {
-              select: { fieldType: true, customKey: true, level: true },
-            },
-          },
-        })
-      : null;
+    if (hasRequirementUpdate && !existingRequirements) {
+      throw new NotFoundException('Product request not found');
+    }
 
     const requirementLevelsChanged =
       hasRequirementUpdate &&
-      existingRequirementLevels &&
+      existingRequirements &&
       this.requirementLevelsChanged(
-        existingRequirementLevels,
+        existingRequirements,
         dto.documentRequirements!,
         dto.fieldRequirements!,
       );
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.productRequest.update({
-        where: { id },
-        data: {
-          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-          ...(dto.sku !== undefined ? { sku } : {}),
-          ...(dto.price !== undefined
-            ? { price: new Prisma.Decimal(dto.price) }
-            : {}),
-          ...(photo ? { photo: photoUrl } : {}),
-          ...(hasRequirementUpdate ? { requirementsUpdatedAt: new Date() } : {}),
-        },
-      });
-
-      if (hasRequirementUpdate) {
-        await this.syncRequirementsOnUpdate(
-          tx,
-          id,
-          dto.documentRequirements!,
-          dto.fieldRequirements!,
-          uploadedPrefills,
-        );
-      }
-
-      if (requirementLevelsChanged) {
-        await tx.notification.create({
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.productRequest.update({
+          where: { id },
           data: {
-            type: NotificationType.REQUEST_REQUIREMENTS_UPDATED,
-            title: 'Compliance requirements updated',
-            message: `${currentUser.name} updated required fields for ${product.name}`,
-            creatorId: currentUser.sub,
-            receiverId: product.supplierId,
-            productRequestId: id,
+            ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+            ...(dto.sku !== undefined ? { sku } : {}),
+            ...(dto.price !== undefined
+              ? { price: new Prisma.Decimal(dto.price) }
+              : {}),
+            ...(photo ? { photo: photoUrl } : {}),
+            ...(hasRequirementUpdate
+              ? { requirementsUpdatedAt: new Date() }
+              : {}),
           },
         });
-      }
-    });
+
+        if (hasRequirementUpdate && existingRequirements) {
+          await this.syncRequirementsOnUpdate(
+            tx,
+            id,
+            dto.documentRequirements!,
+            dto.fieldRequirements!,
+            uploadedPrefills,
+            existingRequirements,
+          );
+        }
+
+        if (requirementLevelsChanged) {
+          await tx.notification.create({
+            data: {
+              type: NotificationType.REQUEST_REQUIREMENTS_UPDATED,
+              title: 'Compliance requirements updated',
+              message: `${currentUser.name} updated required fields for ${product.name}`,
+              creatorId: currentUser.sub,
+              receiverId: product.supplierId,
+              productRequestId: id,
+            },
+          });
+        }
+      },
+      { timeout: 15_000 },
+    );
 
     return { message: 'Product updated successfully', data: null };
   }
@@ -477,10 +506,7 @@ export class ProductsService {
     documentRequirements: DocumentRequirementDto[],
     docPrefillFiles: Express.Multer.File[],
   ) {
-    const prefillByRequirementKey = new Map<
-      string,
-      Express.Multer.File
-    >();
+    const prefillByRequirementKey = new Map<string, Express.Multer.File>();
 
     for (const file of docPrefillFiles) {
       const parsed = parseDocumentPrefillFieldName(file.fieldname);
@@ -511,19 +537,17 @@ export class ProductsService {
       prefillByRequirementKey.set(key, file);
     }
 
-    const uploadedPrefills = new Map<
-      string,
-      { fileUrl: string; fileName: string }
-    >();
-    for (const [key, file] of prefillByRequirementKey) {
-      const fileUrl = await this.objectStorageService.uploadFile(file);
-      uploadedPrefills.set(key, {
-        fileUrl,
-        fileName: file.originalname,
-      });
-    }
+    const uploadedEntries = await Promise.all(
+      [...prefillByRequirementKey.entries()].map(async ([key, file]) => {
+        const fileUrl = await this.objectStorageService.uploadFile(file);
+        return [
+          key,
+          { fileUrl, fileName: file.originalname },
+        ] as const;
+      }),
+    );
 
-    return uploadedPrefills;
+    return new Map(uploadedEntries);
   }
 
   private requirementLevelsChanged(
@@ -574,93 +598,282 @@ export class ProductsService {
     documentRequirements: DocumentRequirementDto[],
     fieldRequirements: FieldRequirementDto[],
     uploadedPrefills: Map<string, { fileUrl: string; fileName: string }>,
+    existing: {
+      documentRequirements: Array<{
+        id: string;
+        type: DocumentType;
+        customKey: string;
+        label: string | null;
+        level: RequirementLevel;
+        visibility: DocumentVisibility;
+        document: { id: string } | null;
+      }>;
+      fieldRequirements: Array<{
+        id: string;
+        fieldType: FieldType;
+        customKey: string;
+        label: string | null;
+        level: RequirementLevel;
+        visibility: DocumentVisibility;
+        fieldValue: { id: string; value: string } | null;
+      }>;
+    },
   ) {
+    const existingDocsByKey = new Map(
+      existing.documentRequirements.map((row) => [
+        `${row.type}::${row.customKey}`,
+        row,
+      ]),
+    );
+    const existingFieldsByKey = new Map(
+      existing.fieldRequirements.map((row) => [
+        `${row.fieldType}::${row.customKey}`,
+        row,
+      ]),
+    );
+
+    const docsToCreate: Array<
+      ReturnType<ProductsService['toDocumentRequirementCreate']>
+    > = [];
+    const docsToUpdate: Array<{
+      id: string;
+      data: ReturnType<ProductsService['toDocumentRequirementCreate']>;
+    }> = [];
+    const docPrefillTargets: Array<{
+      key: string;
+      requirementId?: string;
+      documentId?: string;
+    }> = [];
+
     for (const row of documentRequirements) {
       const data = this.toDocumentRequirementCreate(row);
-      const requirement = await tx.productDocumentRequirement.upsert({
-        where: {
-          productRequestId_type_customKey: {
-            productRequestId,
-            type: data.type,
-            customKey: data.customKey,
-          },
-        },
-        update: {
-          level: data.level,
-          visibility: data.visibility,
-          label: data.label,
-        },
-        create: {
-          productRequestId,
-          ...data,
-        },
-        include: { document: true },
-      });
-
       const key = `${data.type}::${data.customKey}`;
+      const previous = existingDocsByKey.get(key);
       const prefill = uploadedPrefills.get(key);
-      if (!prefill) {
+
+      if (!previous) {
+        docsToCreate.push(data);
+        if (prefill) {
+          docPrefillTargets.push({ key });
+        }
         continue;
       }
 
-      if (requirement.document) {
-        await tx.productDocument.update({
-          where: { id: requirement.document.id },
-          data: {
-            fileUrl: prefill.fileUrl,
-            fileName: prefill.fileName,
-          },
-        });
-      } else {
-        await tx.productDocument.create({
-          data: {
-            requirementId: requirement.id,
-            fileUrl: prefill.fileUrl,
-            fileName: prefill.fileName,
-          },
+      const metadataChanged =
+        previous.level !== data.level ||
+        previous.visibility !== data.visibility ||
+        previous.label !== data.label;
+
+      if (metadataChanged) {
+        docsToUpdate.push({ id: previous.id, data });
+      }
+
+      if (prefill) {
+        docPrefillTargets.push({
+          key,
+          requirementId: previous.id,
+          documentId: previous.document?.id,
         });
       }
     }
 
+    const fieldsToCreate: Array<
+      ReturnType<ProductsService['toFieldRequirementCreate']>
+    > = [];
+    const fieldsToUpdate: Array<{
+      id: string;
+      data: ReturnType<ProductsService['toFieldRequirementCreate']>;
+    }> = [];
+    const fieldPrefillTargets: Array<{
+      key: string;
+      requirementId?: string;
+      fieldValueId?: string;
+      value: string;
+    }> = [];
+
     for (const row of fieldRequirements) {
       const data = this.toFieldRequirementCreate(row);
-      const requirement = await tx.productFieldRequirement.upsert({
-        where: {
-          productRequestId_fieldType_customKey: {
-            productRequestId,
-            fieldType: data.fieldType,
-            customKey: data.customKey,
-          },
-        },
-        update: {
-          level: data.level,
-          visibility: data.visibility,
-          label: data.label,
-        },
-        create: {
-          productRequestId,
-          ...data,
-        },
-        include: { fieldValue: true },
-      });
+      const key = `${data.fieldType}::${data.customKey}`;
+      const previous = existingFieldsByKey.get(key);
 
-      if (!row.prefill) {
+      if (!previous) {
+        fieldsToCreate.push(data);
+        if (row.prefill) {
+          fieldPrefillTargets.push({
+            key,
+            value: row.prefill.value,
+          });
+        }
         continue;
       }
 
-      if (requirement.fieldValue) {
-        await tx.productFieldValue.update({
-          where: { id: requirement.fieldValue.id },
-          data: { value: row.prefill.value },
-        });
-      } else {
-        await tx.productFieldValue.create({
+      const metadataChanged =
+        previous.level !== data.level ||
+        previous.visibility !== data.visibility ||
+        previous.label !== data.label;
+
+      if (metadataChanged) {
+        fieldsToUpdate.push({ id: previous.id, data });
+      }
+
+      if (row.prefill) {
+        const nextValue = row.prefill.value;
+        if (
+          !previous.fieldValue ||
+          previous.fieldValue.value !== nextValue
+        ) {
+          fieldPrefillTargets.push({
+            key,
+            requirementId: previous.id,
+            fieldValueId: previous.fieldValue?.id,
+            value: nextValue,
+          });
+        }
+      }
+    }
+
+    if (docsToCreate.length > 0) {
+      await tx.productDocumentRequirement.createMany({
+        data: docsToCreate.map((data) => ({
+          productRequestId,
+          ...data,
+        })),
+      });
+    }
+
+    for (const item of docsToUpdate) {
+      await tx.productDocumentRequirement.update({
+        where: { id: item.id },
+        data: {
+          level: item.data.level,
+          visibility: item.data.visibility,
+          label: item.data.label,
+        },
+      });
+    }
+
+    if (fieldsToCreate.length > 0) {
+      await tx.productFieldRequirement.createMany({
+        data: fieldsToCreate.map((data) => ({
+          productRequestId,
+          ...data,
+        })),
+      });
+    }
+
+    for (const item of fieldsToUpdate) {
+      await tx.productFieldRequirement.update({
+        where: { id: item.id },
+        data: {
+          level: item.data.level,
+          visibility: item.data.visibility,
+          label: item.data.label,
+        },
+      });
+    }
+
+    const needsNewDocIds = docPrefillTargets.some((item) => !item.requirementId);
+    const needsNewFieldIds = fieldPrefillTargets.some(
+      (item) => !item.requirementId,
+    );
+
+    let createdDocsByKey = new Map<string, { id: string }>();
+    if (needsNewDocIds && docsToCreate.length > 0) {
+      const createdDocs = await tx.productDocumentRequirement.findMany({
+        where: {
+          productRequestId,
+          OR: docsToCreate.map((data) => ({
+            type: data.type,
+            customKey: data.customKey,
+          })),
+        },
+        select: { id: true, type: true, customKey: true },
+      });
+      createdDocsByKey = new Map(
+        createdDocs.map((row) => [`${row.type}::${row.customKey}`, row]),
+      );
+    }
+
+    let createdFieldsByKey = new Map<string, { id: string }>();
+    if (needsNewFieldIds && fieldsToCreate.length > 0) {
+      const createdFields = await tx.productFieldRequirement.findMany({
+        where: {
+          productRequestId,
+          OR: fieldsToCreate.map((data) => ({
+            fieldType: data.fieldType,
+            customKey: data.customKey,
+          })),
+        },
+        select: { id: true, fieldType: true, customKey: true },
+      });
+      createdFieldsByKey = new Map(
+        createdFields.map((row) => [
+          `${row.fieldType}::${row.customKey}`,
+          row,
+        ]),
+      );
+    }
+
+    const documentsToCreate: Array<{
+      requirementId: string;
+      fileUrl: string;
+      fileName: string;
+    }> = [];
+
+    for (const target of docPrefillTargets) {
+      const prefill = uploadedPrefills.get(target.key);
+      if (!prefill) continue;
+
+      const requirementId =
+        target.requirementId ?? createdDocsByKey.get(target.key)?.id;
+      if (!requirementId) continue;
+
+      if (target.documentId) {
+        await tx.productDocument.update({
+          where: { id: target.documentId },
           data: {
-            requirementId: requirement.id,
-            value: row.prefill.value,
+            fileUrl: prefill.fileUrl,
+            fileName: prefill.fileName,
           },
         });
+      } else {
+        documentsToCreate.push({
+          requirementId,
+          fileUrl: prefill.fileUrl,
+          fileName: prefill.fileName,
+        });
       }
+    }
+
+    if (documentsToCreate.length > 0) {
+      await tx.productDocument.createMany({ data: documentsToCreate });
+    }
+
+    const fieldValuesToCreate: Array<{
+      requirementId: string;
+      value: string;
+    }> = [];
+
+    for (const target of fieldPrefillTargets) {
+      const requirementId =
+        target.requirementId ?? createdFieldsByKey.get(target.key)?.id;
+      if (!requirementId) continue;
+
+      if (target.fieldValueId) {
+        await tx.productFieldValue.update({
+          where: { id: target.fieldValueId },
+          data: { value: target.value },
+        });
+      } else {
+        fieldValuesToCreate.push({
+          requirementId,
+          value: target.value,
+        });
+      }
+    }
+
+    if (fieldValuesToCreate.length > 0) {
+      await tx.productFieldValue.createMany({ data: fieldValuesToCreate });
     }
   }
 
