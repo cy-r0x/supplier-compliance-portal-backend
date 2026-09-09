@@ -20,8 +20,8 @@ import { Role } from '@prisma/client';
 import {
   CurrentUser,
   Roles,
-} from 'src/infrastructure/auth/decorators/auth.decorator';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
+} from '../../../infrastructure/auth/decorators/auth.decorator';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
 import { UsersService } from '../services/users.service';

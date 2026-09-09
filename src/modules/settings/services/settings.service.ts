@@ -3,8 +3,8 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
-import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { UpdateSettingsDto } from '../dto/update-settings.dto';
 
 @Injectable()

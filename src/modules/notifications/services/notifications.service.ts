@@ -3,9 +3,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { getPagination, parseSortQuery } from 'src/common/utils/query.util';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
-import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import { getPagination, parseSortQuery } from '../../../common/utils/query.util';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { ListNotificationsQueryDto } from '../dto/list-notifications-query.dto';
 
 const NOTIFICATION_SORT_FIELDS = ['createdAt'] as const;

@@ -2,7 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
-import { QueryDto } from 'src/common/dto/query.dto';
+import { QueryDto } from '../../../common/dto/query.dto';
 
 export class ListProductsQueryDto extends QueryDto {
   @ApiPropertyOptional({

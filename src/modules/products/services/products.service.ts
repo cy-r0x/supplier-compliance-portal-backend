@@ -14,10 +14,10 @@ import {
   RequirementLevel,
   Role,
 } from '@prisma/client';
-import { getPagination, parseSortQuery } from 'src/common/utils/query.util';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
-import { ObjectStorageService } from 'src/infrastructure/object-storage/services/object-storage.service';
-import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import { getPagination, parseSortQuery } from '../../../common/utils/query.util';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
+import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import {
   CreateProductRequestDto,
   DocumentRequirementDto,

@@ -6,7 +6,7 @@ import {
   RequirementLevel,
 } from '@prisma/client';
 import { Transform, Type, plainToInstance } from 'class-transformer';
-import { TransformOptionalNumber } from 'src/common/transforms/optional-number.transform';
+import { TransformOptionalNumber } from '../../../common/transforms/optional-number.transform';
 import {
   IsArray,
   IsEnum,

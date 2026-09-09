@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { UsersController } from './controllers/users.controller';
 import { UsersService } from './services/users.service';
-import { ObjectStorageModule } from 'src/infrastructure/object-storage/object-storage.module';
+import { ObjectStorageModule } from '../../infrastructure/object-storage/object-storage.module';
 
 @Module({
   imports: [ObjectStorageModule],

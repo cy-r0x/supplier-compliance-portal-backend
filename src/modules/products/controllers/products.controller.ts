@@ -29,8 +29,8 @@ import {
 import {
   CurrentUser,
   Roles,
-} from 'src/infrastructure/auth/decorators/auth.decorator';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
+} from '../../../infrastructure/auth/decorators/auth.decorator';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { CreateProductRequestDto } from '../dto/create-product-request.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { RejectProductDto } from '../dto/reject-product.dto';

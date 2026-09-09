@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DocumentVisibility, ProductStatus } from '@prisma/client';
-import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 
 const PUBLIC_STATUSES: ProductStatus[] = [
   ProductStatus.SUBMITTED,

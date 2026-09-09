@@ -6,12 +6,12 @@ import {
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { getPagination, parseSortQuery } from 'src/common/utils/query.util';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
-import { PrismaService } from 'src/infrastructure/prisma/prisma.service';
+import { getPagination, parseSortQuery } from '../../../common/utils/query.util';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
-import { ObjectStorageService } from 'src/infrastructure/object-storage/services/object-storage.service';
+import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
 
 const BCRYPT_ROUNDS = 10;
 const USER_SORT_FIELDS = ['createdAt', 'name', 'email'] as const;

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from 'src/infrastructure/auth/decorators/auth.decorator';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
+import { CurrentUser } from '../../../infrastructure/auth/decorators/auth.decorator';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { UpdateSettingsDto } from '../dto/update-settings.dto';
 import { SettingsService } from '../services/settings.service';
 

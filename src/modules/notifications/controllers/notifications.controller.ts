@@ -7,8 +7,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from 'src/infrastructure/auth/decorators/auth.decorator';
-import type { JwtPayload } from 'src/infrastructure/auth/types/jwt-payload';
+import { CurrentUser } from '../../../infrastructure/auth/decorators/auth.decorator';
+import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { ListNotificationsQueryDto } from '../dto/list-notifications-query.dto';
 import { NotificationsService } from '../services/notifications.service';
 

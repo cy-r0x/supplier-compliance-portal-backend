@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional } from 'class-validator';
-import { QueryDto } from 'src/common/dto/query.dto';
+import { QueryDto } from '../../../common/dto/query.dto';
 
 export class ListNotificationsQueryDto extends QueryDto {
   @ApiPropertyOptional({

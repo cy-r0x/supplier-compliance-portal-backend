@@ -8,7 +8,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { TransformOptionalNumber } from 'src/common/transforms/optional-number.transform';
+import { TransformOptionalNumber } from '../../../common/transforms/optional-number.transform';
 import {
   DocumentRequirementDto,
   FieldRequirementDto,
