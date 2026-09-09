@@ -1,8 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 
-const DEFAULT_CONNECT_POLLS = 10;
-const POLL_INTERVAL_MS = 1000;
+const DEFAULT_CONNECT_POLLS = 3;
+const POLL_INTERVAL_MS = 500;
 
 @Injectable()
 export class PrismaService

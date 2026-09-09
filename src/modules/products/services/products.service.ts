@@ -185,56 +185,12 @@ export class ProductsService {
       file.fieldname.startsWith('docPrefill__'),
     );
 
-    const prefillByRequirementKey = new Map<
-      string,
-      Express.Multer.File
-    >();
-
-    for (const file of docPrefillFiles) {
-      const parsed = parseDocumentPrefillFieldName(file.fieldname);
-      if (!parsed) {
-        throw new BadRequestException(
-          `Invalid document prefill field name: ${file.fieldname}. Use docPrefill__{TYPE} or docPrefill__OTHER__{customKey}`,
-        );
-      }
-
-      const matchesRequirement = dto.documentRequirements.some((row) => {
-        const customKey =
-          row.type === DocumentType.OTHER ? (row.customKey?.trim() ?? '') : '';
-        return row.type === parsed.type && customKey === parsed.customKey;
-      });
-
-      if (!matchesRequirement) {
-        throw new BadRequestException(
-          `No document requirement matches prefill file field ${file.fieldname}`,
-        );
-      }
-
-      const key = `${parsed.type}::${parsed.customKey}`;
-      if (prefillByRequirementKey.has(key)) {
-        throw new BadRequestException(
-          `Duplicate prefill file for ${file.fieldname}`,
-        );
-      }
-      prefillByRequirementKey.set(key, file);
-    }
-
-    let photoUrl: string | null = null;
-    if (photo) {
-      photoUrl = await this.objectStorageService.uploadFile(photo);
-    }
-
-    const uploadedPrefills = new Map<
-      string,
-      { fileUrl: string; fileName: string }
-    >();
-    for (const [key, file] of prefillByRequirementKey) {
-      const fileUrl = await this.objectStorageService.uploadFile(file);
-      uploadedPrefills.set(key, {
-        fileUrl,
-        fileName: file.originalname,
-      });
-    }
+    const [photoUrl, uploadedPrefills] = await Promise.all([
+      photo
+        ? this.objectStorageService.uploadFile(photo)
+        : Promise.resolve(null as string | null),
+      this.uploadDocumentPrefills(dto.documentRequirements, docPrefillFiles),
+    ]);
 
     await this.prisma.$transaction(async (tx) => {
       const productRequest = await tx.productRequest.create({
@@ -939,29 +895,6 @@ export class ProductsService {
     const fieldValues = this.parseFieldValues(dto.fieldValues);
     const docFiles = files.filter((file) => file.fieldname.startsWith('doc__'));
 
-    for (const requirement of product.documentRequirements) {
-      const file = docFiles.find(
-        (f) => f.fieldname === `doc__${requirement.id}`,
-      );
-      if (file) {
-        const fileUrl = await this.objectStorageService.uploadFile(file);
-        if (requirement.document) {
-          await this.prisma.productDocument.update({
-            where: { id: requirement.document.id },
-            data: { fileUrl, fileName: file.originalname },
-          });
-        } else {
-          await this.prisma.productDocument.create({
-            data: {
-              requirementId: requirement.id,
-              fileUrl,
-              fileName: file.originalname,
-            },
-          });
-        }
-      }
-    }
-
     for (const entry of fieldValues) {
       const requirement = product.fieldRequirements.find(
         (row) => row.id === entry.requirementId,
@@ -971,77 +904,170 @@ export class ProductsService {
           `Unknown field requirement: ${entry.requirementId}`,
         );
       }
-      const value = entry.value?.trim() ?? '';
-      if (requirement.fieldValue) {
-        await this.prisma.productFieldValue.update({
-          where: { id: requirement.fieldValue.id },
-          data: { value },
+    }
+
+    const filesByRequirementId = new Map<string, Express.Multer.File>();
+    for (const requirement of product.documentRequirements) {
+      const file = docFiles.find(
+        (f) => f.fieldname === `doc__${requirement.id}`,
+      );
+      if (file) {
+        filesByRequirementId.set(requirement.id, file);
+      }
+    }
+
+    const uploadedDocs = await Promise.all(
+      [...filesByRequirementId.entries()].map(async ([requirementId, file]) => {
+        const fileUrl = await this.objectStorageService.uploadFile(file);
+        return {
+          requirementId,
+          fileUrl,
+          fileName: file.originalname,
+        };
+      }),
+    );
+
+    const uploadedByRequirementId = new Map(
+      uploadedDocs.map((row) => [row.requirementId, row] as const),
+    );
+
+    const documentsToCreate: Array<{
+      requirementId: string;
+      fileUrl: string;
+      fileName: string;
+    }> = [];
+
+    for (const requirement of product.documentRequirements) {
+      const uploaded = uploadedByRequirementId.get(requirement.id);
+      if (!uploaded) {
+        continue;
+      }
+
+      if (requirement.document) {
+        await this.prisma.productDocument.update({
+          where: { id: requirement.document.id },
+          data: {
+            fileUrl: uploaded.fileUrl,
+            fileName: uploaded.fileName,
+          },
         });
-      } else if (value) {
-        await this.prisma.productFieldValue.create({
-          data: { requirementId: requirement.id, value },
+      } else {
+        documentsToCreate.push({
+          requirementId: requirement.id,
+          fileUrl: uploaded.fileUrl,
+          fileName: uploaded.fileName,
         });
       }
     }
 
-    const refreshed = await this.prisma.productRequest.findFirst({
-      where: { id },
-      include: {
-        documentRequirements: { include: { document: true } },
-        fieldRequirements: { include: { fieldValue: true } },
-        distributor: {
-          select: {
-            id: true,
-            settings: { select: { autoApproveProductRequests: true } },
-          },
-        },
-      },
-    });
-
-    if (!refreshed) {
-      throw new NotFoundException('Product request not found');
+    if (documentsToCreate.length > 0) {
+      await this.prisma.productDocument.createMany({
+        data: documentsToCreate,
+      });
     }
 
-    this.assertSubmissionComplete(refreshed);
+    const fieldValuesToCreate: Array<{
+      requirementId: string;
+      value: string;
+    }> = [];
+
+    for (const entry of fieldValues) {
+      const requirement = product.fieldRequirements.find(
+        (row) => row.id === entry.requirementId,
+      )!;
+      const value = entry.value?.trim() ?? '';
+
+      if (requirement.fieldValue) {
+        if (requirement.fieldValue.value !== value) {
+          await this.prisma.productFieldValue.update({
+            where: { id: requirement.fieldValue.id },
+            data: { value },
+          });
+        }
+      } else if (value) {
+        fieldValuesToCreate.push({
+          requirementId: requirement.id,
+          value,
+        });
+      }
+    }
+
+    if (fieldValuesToCreate.length > 0) {
+      await this.prisma.productFieldValue.createMany({
+        data: fieldValuesToCreate,
+      });
+    }
+
+    this.assertSubmissionComplete({
+      documentRequirements: product.documentRequirements.map((row) => {
+        const uploaded = uploadedByRequirementId.get(row.id);
+        return {
+          level: row.level,
+          document: uploaded
+            ? { fileUrl: uploaded.fileUrl }
+            : row.document
+              ? { fileUrl: row.document.fileUrl }
+              : null,
+        };
+      }),
+      fieldRequirements: product.fieldRequirements.map((row) => {
+        const submitted = fieldValues.find(
+          (entry) => entry.requirementId === row.id,
+        );
+        const value =
+          submitted !== undefined
+            ? submitted.value.trim()
+            : (row.fieldValue?.value ?? '');
+        return {
+          level: row.level,
+          fieldValue: value ? { value } : null,
+        };
+      }),
+    });
 
     const autoApprove =
-      refreshed.distributor.settings?.autoApproveProductRequests ?? false;
+      product.distributor.settings?.autoApproveProductRequests ?? false;
     const now = new Date();
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.productRequest.update({
-        where: { id },
-        data: {
-          status: autoApprove ? ProductStatus.APPROVED : ProductStatus.SUBMITTED,
-          submittedAt: now,
-          ...(autoApprove ? { reviewedAt: now, rejectionReason: null } : {}),
-        },
-      });
-
-      await tx.notification.create({
-        data: {
-          type: NotificationType.REQUEST_SUBMITTED,
-          title: 'Request submitted for review',
-          message: `${currentUser.name} submitted compliance for ${refreshed.name}`,
-          creatorId: currentUser.sub,
-          receiverId: refreshed.distributorId,
-          productRequestId: refreshed.id,
-        },
-      });
-
-      if (autoApprove) {
-        await tx.notification.create({
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.productRequest.update({
+          where: { id },
           data: {
-            type: NotificationType.REQUEST_APPROVED,
-            title: 'Request approved',
-            message: `Compliance for ${refreshed.name} was auto-approved`,
-            creatorId: currentUser.sub,
-            receiverId: refreshed.supplierId,
-            productRequestId: refreshed.id,
+            status: autoApprove
+              ? ProductStatus.APPROVED
+              : ProductStatus.SUBMITTED,
+            submittedAt: now,
+            ...(autoApprove ? { reviewedAt: now, rejectionReason: null } : {}),
           },
         });
-      }
-    });
+
+        await tx.notification.create({
+          data: {
+            type: NotificationType.REQUEST_SUBMITTED,
+            title: 'Request submitted for review',
+            message: `${currentUser.name} submitted compliance for ${product.name}`,
+            creatorId: currentUser.sub,
+            receiverId: product.distributorId,
+            productRequestId: product.id,
+          },
+        });
+
+        if (autoApprove) {
+          await tx.notification.create({
+            data: {
+              type: NotificationType.REQUEST_APPROVED,
+              title: 'Request approved',
+              message: `Compliance for ${product.name} was auto-approved`,
+              creatorId: currentUser.sub,
+              receiverId: product.supplierId,
+              productRequestId: product.id,
+            },
+          });
+        }
+      },
+      { timeout: 15_000 },
+    );
 
     return {
       message: autoApprove

@@ -87,6 +87,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+  @@index([createdById])
   @@map("users")
 }
 
@@ -117,6 +118,7 @@ model RefreshToken {
   createdAt         DateTime  @default(now())
 
   @@index([userId])
+  @@index([expiresAt])
   @@map("refresh_tokens")
 }
 
@@ -155,6 +157,7 @@ model ProductRequest {
   @@index([supplierId, isDeleted, status])
   @@index([distributorId, isDeleted, status])
   @@index([isDeleted, deletedAt])
+  @@index([isDeleted, status, createdAt])
   @@index([status])
   @@map("product_requests")
 }
@@ -178,7 +181,8 @@ model ProductDocumentRequirement {
   updatedAt DateTime @updatedAt
 
   @@unique([productRequestId, type, customKey])
-  @@index([productRequestId])
+  @@index([productRequestId, level])
+  @@index([productRequestId, visibility])
   @@map("product_document_requirements")
 }
 
@@ -215,7 +219,8 @@ model ProductFieldRequirement {
   updatedAt DateTime @updatedAt
 
   @@unique([productRequestId, fieldType, customKey])
-  @@index([productRequestId])
+  @@index([productRequestId, level])
+  @@index([productRequestId, visibility])
   @@map("product_field_requirements")
 }
 
@@ -272,6 +277,8 @@ model Notification {
   updatedAt DateTime @updatedAt
 
   @@index([receiverId, isRead, createdAt])
+  @@index([receiverId, createdAt])
   @@index([productRequestId])
+  @@index([creatorId])
   @@map("notifications")
 }

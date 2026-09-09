@@ -20,6 +20,7 @@ export class ObjectStorageService implements OnModuleInit {
   private client!: S3Client;
   private bucket!: string;
   private publicBaseUrl!: string;
+  private ensureBucketPromise: Promise<void> | null = null;
 
   async onModuleInit() {
     const config = getObjectStorageConfig();
@@ -39,9 +40,9 @@ export class ObjectStorageService implements OnModuleInit {
       forcePathStyle: true,
     });
 
-    await this.ensureBucket();
+    // Do not block Nest boot on MinIO reachability (avoids Vercel cold-start 503).
     this.logger.log(
-      `Object storage ready (bucket="${this.bucket}", publicBaseUrl="${this.publicBaseUrl}")`,
+      `Object storage client configured (bucket="${this.bucket}", publicBaseUrl="${this.publicBaseUrl}")`,
     );
   }
 
@@ -49,6 +50,8 @@ export class ObjectStorageService implements OnModuleInit {
    * Uploads a file and returns its public URL.
    */
   async uploadFile(file: Express.Multer.File): Promise<string> {
+    await this.ensureBucketOnce();
+
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
     const key = `uploads/${randomUUID()}-${safeName}`;
 
@@ -68,6 +71,25 @@ export class ObjectStorageService implements OnModuleInit {
     }
 
     return this.buildPublicUrl(key);
+  }
+
+  private async ensureBucketOnce(): Promise<void> {
+    if (!this.ensureBucketPromise) {
+      this.ensureBucketPromise = this.ensureBucket().catch((error) => {
+        this.ensureBucketPromise = null;
+        this.logger.error(
+          `Failed to ensure object storage bucket "${this.bucket}"`,
+          error,
+        );
+        throw error;
+      });
+    }
+
+    try {
+      await this.ensureBucketPromise;
+    } catch {
+      throw new InternalServerErrorException('Failed to upload file');
+    }
   }
 
   private buildPublicUrl(key: string): string {
