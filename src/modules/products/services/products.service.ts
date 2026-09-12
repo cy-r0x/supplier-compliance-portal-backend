@@ -132,11 +132,11 @@ export class ProductsService {
 
       const progress = this.computeRequiredProgress(
         template.documents.map((doc) => ({
-          document: documentAnswers.some(
+          documents: documentAnswers.some(
             (answer) => answer.templateDocumentId === doc.id,
           )
-            ? { id: doc.id }
-            : null,
+            ? [{ id: doc.id }]
+            : [],
         })),
         template.fields.map((field) => {
           const answer = fieldAnswers.find(
@@ -366,9 +366,7 @@ export class ProductsService {
           label: row.label,
           level: row.level,
           visibility: row.visibility,
-          document: row.document
-            ? { fileUrl: row.document.fileUrl, fileName: row.document.fileName }
-            : null,
+          documents: row.documents,
         })),
         fieldRequirements: fieldRequirements.map((row) => ({
           id: row.id,
@@ -706,9 +704,13 @@ export class ProductsService {
     currentUser: JwtPayload,
   ) {
     const fieldValues = this.parseFieldValues(dto.fieldValues);
+    const removedDocumentAnswerIds = this.parseRemovedDocumentAnswerIds(
+      dto.removedDocumentAnswerIds,
+    );
     const docFiles = files.filter((file) => file.fieldname.startsWith('doc__'));
     const templateDocs = product.template.documents;
     const templateFields = product.template.fields;
+    const templateDocIds = new Set(templateDocs.map((row) => row.id));
 
     for (const entry of fieldValues) {
       const requirement = templateFields.find(
@@ -721,18 +723,40 @@ export class ProductsService {
       }
     }
 
-    const filesByRequirementId = new Map<string, Express.Multer.File>();
-    for (const requirement of templateDocs) {
-      const file = docFiles.find(
-        (f) => f.fieldname === `doc__${requirement.id}`,
+    if (removedDocumentAnswerIds.length > 0) {
+      const removable = product.documentAnswers.filter((row) =>
+        removedDocumentAnswerIds.includes(row.id),
       );
-      if (file) {
-        filesByRequirementId.set(requirement.id, file);
+      if (removable.length !== removedDocumentAnswerIds.length) {
+        throw new BadRequestException(
+          'One or more removed document answers are invalid for this request',
+        );
       }
+      await this.prisma.productDocumentAnswer.deleteMany({
+        where: {
+          productRequestId: product.id,
+          id: { in: removedDocumentAnswerIds },
+        },
+      });
+    }
+
+    const uploadsToCreate: Array<{
+      requirementId: string;
+      file: Express.Multer.File;
+    }> = [];
+
+    for (const file of docFiles) {
+      const requirementId = file.fieldname.slice('doc__'.length);
+      if (!templateDocIds.has(requirementId)) {
+        throw new BadRequestException(
+          `Unknown document requirement for file field ${file.fieldname}`,
+        );
+      }
+      uploadsToCreate.push({ requirementId, file });
     }
 
     const uploadedDocs = await Promise.all(
-      [...filesByRequirementId.entries()].map(async ([requirementId, file]) => {
+      uploadsToCreate.map(async ({ requirementId, file }) => {
         const fileUrl = await this.objectStorageService.uploadFile(file);
         return {
           requirementId,
@@ -742,66 +766,49 @@ export class ProductsService {
       }),
     );
 
-    const uploadedByRequirementId = new Map(
-      uploadedDocs.map((row) => [row.requirementId, row] as const),
-    );
+    if (uploadedDocs.length > 0) {
+      await this.prisma.productDocumentAnswer.createMany({
+        data: uploadedDocs.map((row) => ({
+          productRequestId: product.id,
+          templateDocumentId: row.requirementId,
+          fileUrl: row.fileUrl,
+          fileName: row.fileName,
+        })),
+      });
+    }
 
-    const answersByTemplateDocId = new Map(
-      product.documentAnswers.map((row) => [row.templateDocumentId, row]),
-    );
     const answersByTemplateFieldId = new Map(
       product.fieldAnswers.map((row) => [row.templateFieldId, row]),
     );
 
-    const documentsToCreate: Array<{
-      productRequestId: string;
-      templateDocumentId: string;
-      fileUrl: string;
-      fileName: string;
-    }> = [];
-
-    for (const requirement of templateDocs) {
-      const uploaded = uploadedByRequirementId.get(requirement.id);
-      if (!uploaded) {
-        continue;
-      }
-
-      const existing = answersByTemplateDocId.get(requirement.id);
-      if (existing) {
-        await this.prisma.productDocumentAnswer.update({
-          where: { id: existing.id },
-          data: {
-            fileUrl: uploaded.fileUrl,
-            fileName: uploaded.fileName,
-          },
-        });
-      } else {
-        documentsToCreate.push({
-          productRequestId: product.id,
-          templateDocumentId: requirement.id,
-          fileUrl: uploaded.fileUrl,
-          fileName: uploaded.fileName,
-        });
-      }
-    }
-
-    if (documentsToCreate.length > 0) {
-      await this.prisma.productDocumentAnswer.createMany({
-        data: documentsToCreate,
-      });
-    }
-
     const productImageRequirement = templateDocs.find(
       (row) => row.type === DocumentType.PRODUCT_IMAGE,
     );
-    const productImageUpload = productImageRequirement
-      ? uploadedByRequirementId.get(productImageRequirement.id)
-      : undefined;
-    if (productImageUpload) {
-      await this.prisma.productRequest.update({
-        where: { id: product.id },
-        data: { photo: productImageUpload.fileUrl },
-      });
+    if (productImageRequirement) {
+      const latestUpload = [...uploadedDocs]
+        .reverse()
+        .find((row) => row.requirementId === productImageRequirement.id);
+      if (latestUpload) {
+        await this.prisma.productRequest.update({
+          where: { id: product.id },
+          data: { photo: latestUpload.fileUrl },
+        });
+      } else {
+        const remaining = await this.prisma.productDocumentAnswer.findFirst({
+          where: {
+            productRequestId: product.id,
+            templateDocumentId: productImageRequirement.id,
+          },
+          orderBy: { uploadedAt: 'desc' },
+          select: { fileUrl: true },
+        });
+        if (remaining) {
+          await this.prisma.productRequest.update({
+            where: { id: product.id },
+            data: { photo: remaining.fileUrl },
+          });
+        }
+      }
     }
 
     const fieldAnswersToCreate: Array<{
@@ -835,35 +842,6 @@ export class ProductsService {
         data: fieldAnswersToCreate,
       });
     }
-
-    this.assertSubmissionComplete({
-      documentRequirements: templateDocs.map((row) => {
-        const uploaded = uploadedByRequirementId.get(row.id);
-        const existing = answersByTemplateDocId.get(row.id);
-        return {
-          level: row.level,
-          document: uploaded
-            ? { fileUrl: uploaded.fileUrl }
-            : existing
-              ? { fileUrl: existing.fileUrl }
-              : null,
-        };
-      }),
-      fieldRequirements: templateFields.map((row) => {
-        const submitted = fieldValues.find(
-          (entry) => entry.requirementId === row.id,
-        );
-        const existing = answersByTemplateFieldId.get(row.id);
-        const value =
-          submitted !== undefined
-            ? submitted.value.trim()
-            : (existing?.value ?? '');
-        return {
-          level: row.level,
-          fieldValue: value ? { value } : null,
-        };
-      }),
-    });
 
     await this.finalizeSubmission(product, currentUser);
   }
@@ -1046,10 +1024,13 @@ export class ProductsService {
         },
         documentAnswers: {
           select: {
+            id: true,
             templateDocumentId: true,
             fileUrl: true,
             fileName: true,
+            uploadedAt: true,
           },
+          orderBy: { uploadedAt: 'asc' },
         },
         fieldAnswers: {
           select: {
@@ -1070,9 +1051,23 @@ export class ProductsService {
       throw new NotFoundException('Product request template not found');
     }
 
-    const answersByDocId = new Map(
-      product.documentAnswers.map((row) => [row.templateDocumentId, row]),
-    );
+    const answersByDocId = new Map<
+      string,
+      Array<{
+        id: string;
+        fileUrl: string;
+        fileName: string | null;
+      }>
+    >();
+    for (const row of product.documentAnswers) {
+      const list = answersByDocId.get(row.templateDocumentId) ?? [];
+      list.push({
+        id: row.id,
+        fileUrl: row.fileUrl,
+        fileName: row.fileName,
+      });
+      answersByDocId.set(row.templateDocumentId, list);
+    }
     const answersByFieldId = new Map(
       product.fieldAnswers.map((row) => [row.templateFieldId, row]),
     );
@@ -1088,7 +1083,7 @@ export class ProductsService {
       ...rest,
       template: { id: template.id, name: template.name },
       documentRequirements: template.documents.map((row) => {
-        const answer = answersByDocId.get(row.id);
+        const documents = answersByDocId.get(row.id) ?? [];
         return {
           id: row.id,
           type: row.type,
@@ -1096,9 +1091,7 @@ export class ProductsService {
           label: row.label,
           level: row.level,
           visibility: row.visibility,
-          document: answer
-            ? { fileUrl: answer.fileUrl, fileName: answer.fileName }
-            : null,
+          documents,
         };
       }),
       fieldRequirements: template.fields.map((row) => {
@@ -1215,9 +1208,12 @@ export class ProductsService {
     uploadedPrefills: Map<string, { fileUrl: string; fileName: string }>,
     fieldRequirements: FieldRequirementDto[],
   ) {
-    const answersByDocId = new Map(
-      existing.documentAnswers.map((row) => [row.templateDocumentId, row]),
-    );
+    const answersByDocId = new Map<string, { id: string }>();
+    for (const row of existing.documentAnswers) {
+      if (!answersByDocId.has(row.templateDocumentId)) {
+        answersByDocId.set(row.templateDocumentId, row);
+      }
+    }
     const answersByFieldId = new Map(
       existing.fieldAnswers.map((row) => [row.templateFieldId, row]),
     );
@@ -1344,33 +1340,20 @@ export class ProductsService {
     }
   }
 
-  private assertSubmissionComplete(product: {
-    documentRequirements: Array<{
-      level: RequirementLevel;
-      document: { fileUrl: string } | null;
-    }>;
-    fieldRequirements: Array<{
-      level: RequirementLevel;
-      fieldValue: { value: string } | null;
-    }>;
-  }) {
-    for (const row of product.documentRequirements) {
-      if (row.level === RequirementLevel.REQUIRED && !row.document?.fileUrl) {
-        throw new BadRequestException(
-          'All required documents must be uploaded before submit',
-        );
-      }
+  private parseRemovedDocumentAnswerIds(raw?: string): string[] {
+    if (!raw?.trim()) {
+      return [];
     }
-
-    for (const row of product.fieldRequirements) {
-      if (
-        row.level === RequirementLevel.REQUIRED &&
-        !row.fieldValue?.value?.trim()
-      ) {
-        throw new BadRequestException(
-          'All required fields must be filled before submit',
-        );
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid removedDocumentAnswerIds');
       }
+      return parsed.filter((id): id is string => typeof id === 'string');
+    } catch {
+      throw new BadRequestException(
+        'removedDocumentAnswerIds must be a valid JSON array of IDs',
+      );
     }
   }
 
@@ -1388,11 +1371,11 @@ export class ProductsService {
   }
 
   private computeRequiredProgress(
-    documentRequirements: Array<{ document: unknown | null }>,
+    documentRequirements: Array<{ documents: unknown[] }>,
     fieldRequirements: Array<{ fieldValue: { value?: string } | null }>,
   ): { completed: number; total: number; percent: number } {
     const docsCompleted = documentRequirements.filter(
-      (row) => row.document != null,
+      (row) => row.documents.length > 0,
     ).length;
     const fieldsCompleted = fieldRequirements.filter(
       (row) => Boolean(row.fieldValue?.value?.trim()),

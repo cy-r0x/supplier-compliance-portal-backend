@@ -248,7 +248,7 @@ model ProductDocumentAnswer {
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([productRequestId, templateDocumentId])
+  @@index([productRequestId, templateDocumentId])
   @@index([templateDocumentId])
   @@map("product_document_answers")
 }

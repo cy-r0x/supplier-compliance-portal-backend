@@ -9,4 +9,13 @@ export class SubmitProductDto {
   @IsOptional()
   @IsString()
   fieldValues?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of existing document answer IDs to delete before adding new uploads',
+    example: '["uuid-1","uuid-2"]',
+  })
+  @IsOptional()
+  @IsString()
+  removedDocumentAnswerIds?: string;
 }

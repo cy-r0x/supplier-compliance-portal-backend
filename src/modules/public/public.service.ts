@@ -50,6 +50,7 @@ export class PublicService {
         },
         documentAnswers: {
           select: {
+            id: true,
             templateDocumentId: true,
             fileUrl: true,
             fileName: true,
@@ -72,26 +73,31 @@ export class PublicService {
       throw new NotFoundException('Public product not found');
     }
 
-    const answersByDocId = new Map(
-      product.documentAnswers.map((row) => [row.templateDocumentId, row]),
-    );
+    const answersByDocId = new Map<
+      string,
+      Array<{ fileUrl: string; fileName: string | null }>
+    >();
+    for (const row of product.documentAnswers) {
+      const list = answersByDocId.get(row.templateDocumentId) ?? [];
+      list.push({ fileUrl: row.fileUrl, fileName: row.fileName });
+      answersByDocId.set(row.templateDocumentId, list);
+    }
     const answersByFieldId = new Map(
       product.fieldAnswers.map((row) => [row.templateFieldId, row]),
     );
 
-    const documents = product.template.documents
-      .map((row) => {
-        const answer = answersByDocId.get(row.id);
-        if (!answer?.fileUrl) return null;
-        return {
+    const documents = product.template.documents.flatMap((row) => {
+      const answers = answersByDocId.get(row.id) ?? [];
+      return answers
+        .filter((answer) => Boolean(answer.fileUrl))
+        .map((answer) => ({
           type: row.type,
           customKey: row.customKey,
           label: row.label,
           fileUrl: answer.fileUrl,
           fileName: answer.fileName,
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => row != null);
+        }));
+    });
 
     const textFields = product.template.fields
       .map((row) => {

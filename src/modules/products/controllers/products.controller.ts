@@ -186,7 +186,8 @@ export class ProductsController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Submit compliance documents and fields',
-    description: 'Files: doc__{requirementId}. Body: fieldValues JSON array.',
+    description:
+      'Files: doc__{requirementId} (multiple files per requirement allowed). Body: fieldValues JSON array; removedDocumentAnswerIds JSON array of existing answer IDs to delete.',
   })
   submit(
     @Param('id', ParseUUIDPipe) id: string,
