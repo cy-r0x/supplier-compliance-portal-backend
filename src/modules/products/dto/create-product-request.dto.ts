@@ -151,7 +151,7 @@ export class CreateProductRequestDto {
 
   @ApiProperty({
     example: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
-    description: 'Requirement template owned by the current distributor',
+    description: 'Requirement template owned by the current organization',
   })
   @IsUUID()
   templateId!: string;

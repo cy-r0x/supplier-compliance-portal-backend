@@ -8,23 +8,27 @@ import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { getPagination, parseSortQuery } from '../../../common/utils/query.util';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { OrgAccessService } from '../../../infrastructure/org-access/org-access.service';
+import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
-import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
 
 const BCRYPT_ROUNDS = 10;
 const USER_SORT_FIELDS = ['createdAt', 'name', 'email'] as const;
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService, private readonly objectStorageService: ObjectStorageService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly objectStorageService: ObjectStorageService,
+    private readonly orgAccess: OrgAccessService,
+  ) {}
 
   async findAll(currentUser: JwtPayload, query: ListUsersQueryDto) {
     const { page, limit, skip } = getPagination(query);
     const orderBy = parseSortQuery(query.sort, USER_SORT_FIELDS);
-
-    const where = this.buildListWhere(currentUser, query);
+    const where = await this.buildListWhere(currentUser, query);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.user.findMany({
@@ -39,6 +43,13 @@ export class UsersService {
           role: true,
           photo: true,
           createdAt: true,
+          organizationMembership: {
+            select: {
+              id: true,
+              role: true,
+              organization: { select: { id: true, name: true } },
+            },
+          },
         },
       }),
       this.prisma.user.count({ where }),
@@ -46,7 +57,22 @@ export class UsersService {
 
     return {
       message: 'Users retrieved successfully',
-      data: items,
+      data: items.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        photo: user.photo,
+        createdAt: user.createdAt,
+        organization: user.organizationMembership
+          ? {
+              membershipId: user.organizationMembership.id,
+              role: user.organizationMembership.role,
+              id: user.organizationMembership.organization.id,
+              name: user.organizationMembership.organization.name,
+            }
+          : null,
+      })),
       pagination: {
         page,
         limit,
@@ -56,45 +82,52 @@ export class UsersService {
     };
   }
 
-  private buildListWhere(
+  private async buildListWhere(
     currentUser: JwtPayload,
     query: ListUsersQueryDto,
-  ): Prisma.UserWhereInput {
+  ): Promise<Prisma.UserWhereInput> {
     if (currentUser.role === Role.SUPPLIER) {
       throw new ForbiddenException('Suppliers cannot list users');
     }
 
-    if (currentUser.role === Role.DISTRIBUTOR) {
-      if (query.role && query.role !== Role.SUPPLIER) {
-        throw new ForbiddenException('Distributors can only list suppliers');
+    const searchFilter = query.search
+      ? {
+          OR: [
+            { name: { contains: query.search, mode: 'insensitive' as const } },
+            { email: { contains: query.search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
+
+    // Org managers: suppliers (product setup) + unassigned USERs (team invite)
+    if (currentUser.role === Role.USER) {
+      await this.orgAccess.requireManager(currentUser);
+
+      if (!query.role || query.role === Role.SUPPLIER) {
+        return {
+          role: Role.SUPPLIER,
+          ...searchFilter,
+        };
       }
-      return {
-        role: Role.SUPPLIER,
-        ...(query.search
-          ? {
-              OR: [
-                { name: { contains: query.search, mode: 'insensitive' } },
-                { email: { contains: query.search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      };
+
+      if (query.role === Role.USER) {
+        return {
+          role: Role.USER,
+          organizationMembership: { is: null },
+          ...searchFilter,
+        };
+      }
+
+      throw new ForbiddenException(
+        'Managers can only list suppliers or unassigned users',
+      );
     }
 
-    const roles = query.role
-      ? [query.role]
-      : [Role.DISTRIBUTOR, Role.SUPPLIER];
-
+    // SUPER_ADMIN
+    const roles = query.role ? [query.role] : [Role.USER, Role.SUPPLIER];
     return {
       role: { in: roles },
-      ...(query.search
-        ? {
-            OR: [
-              { name: { contains: query.search, mode: 'insensitive' } },
-              { email: { contains: query.search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...searchFilter,
     };
   }
 
@@ -107,22 +140,52 @@ export class UsersService {
         email: true,
         role: true,
         photo: true,
+        createdAt: true,
+        organizationMembership: {
+          select: {
+            id: true,
+            role: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 
     return {
       message: 'Profile retrieved successfully',
-      data: user,
+      data: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        photo: user.photo,
+        createdAt: user.createdAt,
+        organization: user.organizationMembership
+          ? {
+              membershipId: user.organizationMembership.id,
+              role: user.organizationMembership.role,
+              id: user.organizationMembership.organization.id,
+              name: user.organizationMembership.organization.name,
+            }
+          : null,
+      },
     };
   }
 
-  async create(dto: CreateUserDto, currentUser: JwtPayload, photo?: Express.Multer.File) {
+  async create(
+    dto: CreateUserDto,
+    currentUser: JwtPayload,
+    photo?: Express.Multer.File,
+  ) {
     this.assertCanCreateRole(dto.role, currentUser.role);
+
+    if (currentUser.role === Role.USER) {
+      await this.orgAccess.requireManager(currentUser);
+    }
 
     let photoUrl: string | null = null;
     if (photo) {
-      const uploadedPhoto = await this.objectStorageService.uploadFile(photo);
-      photoUrl = uploadedPhoto;
+      photoUrl = await this.objectStorageService.uploadFile(photo);
     }
 
     const existing = await this.prisma.user.findUnique({
@@ -144,11 +207,7 @@ export class UsersService {
         role: dto.role,
         photo: photoUrl ?? null,
         createdById: currentUser.sub,
-        settings: {
-          create: {
-            autoApproveProductRequests: false,
-          },
-        },
+        settings: { create: {} },
       },
       select: {
         id: true,
@@ -160,10 +219,7 @@ export class UsersService {
     });
 
     return {
-      message:
-        dto.role === Role.DISTRIBUTOR
-          ? 'Distributor created'
-          : 'Supplier created',
+      message: dto.role === Role.USER ? 'User created' : 'Supplier created',
       data: user,
     };
   }
@@ -198,19 +254,22 @@ export class UsersService {
   }
 
   private assertCanCreateRole(targetRole: Role, actorRole: Role): void {
-    if (targetRole === Role.DISTRIBUTOR) {
-      if (actorRole !== Role.SUPER_ADMIN) {
-        throw new ForbiddenException(
-          'Only SUPER_ADMIN can create distributor users',
-        );
+    if (actorRole === Role.SUPER_ADMIN) {
+      if (targetRole !== Role.USER && targetRole !== Role.SUPPLIER) {
+        throw new ForbiddenException('SUPER_ADMIN can create USER or SUPPLIER');
       }
       return;
     }
 
-    if (actorRole !== Role.SUPER_ADMIN && actorRole !== Role.DISTRIBUTOR) {
-      throw new ForbiddenException(
-        'Only SUPER_ADMIN or DISTRIBUTOR can create this user',
-      );
+    // Managers may create USER (invite) via users API when attaching — keep supplier create for managers
+    if (actorRole === Role.USER && targetRole === Role.SUPPLIER) {
+      return;
     }
+
+    if (actorRole === Role.USER && targetRole === Role.USER) {
+      return;
+    }
+
+    throw new ForbiddenException('You cannot create this user role');
   }
 }

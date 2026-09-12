@@ -1,18 +1,19 @@
-import {
-  ForbiddenException,
-  Injectable,
-} from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { OrgAccessService } from '../../../infrastructure/org-access/org-access.service';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { UpdateSettingsDto } from '../dto/update-settings.dto';
 
 @Injectable()
 export class SettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly orgAccess: OrgAccessService,
+  ) {}
 
   async getMine(currentUser: JwtPayload) {
-    const settings = await this.ensureSettings(currentUser.sub);
+    const membership = await this.orgAccess.requireManager(currentUser);
+    const settings = await this.ensureSettings(membership.organizationId);
 
     return {
       message: 'Settings retrieved successfully',
@@ -23,23 +24,17 @@ export class SettingsService {
   }
 
   async updateMine(currentUser: JwtPayload, dto: UpdateSettingsDto) {
-    if (dto.autoApproveProductRequests !== undefined) {
-      if (currentUser.role !== Role.DISTRIBUTOR) {
-        throw new ForbiddenException(
-          'Only distributors can configure auto-approve',
-        );
-      }
-    }
+    const membership = await this.orgAccess.requireManager(currentUser);
 
-    const settings = await this.prisma.userSettings.upsert({
-      where: { userId: currentUser.sub },
+    const settings = await this.prisma.organizationSettings.upsert({
+      where: { organizationId: membership.organizationId },
       update: {
         ...(dto.autoApproveProductRequests !== undefined
           ? { autoApproveProductRequests: dto.autoApproveProductRequests }
           : {}),
       },
       create: {
-        userId: currentUser.sub,
+        organizationId: membership.organizationId,
         autoApproveProductRequests: dto.autoApproveProductRequests ?? false,
       },
       select: {
@@ -55,12 +50,12 @@ export class SettingsService {
     };
   }
 
-  private async ensureSettings(userId: string) {
-    return this.prisma.userSettings.upsert({
-      where: { userId },
+  private async ensureSettings(organizationId: string) {
+    return this.prisma.organizationSettings.upsert({
+      where: { organizationId },
       update: {},
       create: {
-        userId,
+        organizationId,
         autoApproveProductRequests: false,
       },
     });

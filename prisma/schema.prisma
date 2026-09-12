@@ -9,8 +9,13 @@ datasource db {
 
 enum Role {
   SUPER_ADMIN
-  DISTRIBUTOR
+  USER
   SUPPLIER
+}
+
+enum OrganizationMemberRole {
+  MANAGER
+  MEMBER
 }
 
 enum ProductStatus {
@@ -74,10 +79,10 @@ model User {
   createdBy    User?  @relation("UserCreatedBy", fields: [createdById], references: [id])
   createdUsers User[] @relation("UserCreatedBy")
 
-  requestedProducts ProductRequest[] @relation("ProductDistributor")
-  suppliedProducts  ProductRequest[] @relation("ProductSupplier")
+  organizationMembership OrganizationMember?
 
-  requirementTemplates RequirementTemplate[]
+  createdProductRequests ProductRequest[] @relation("ProductCreatedBy")
+  suppliedProducts       ProductRequest[] @relation("ProductSupplier")
 
   createdNotifications  Notification[]   @relation("NotificationCreator")
   receivedNotifications Notification[]   @relation("NotificationReceiver")
@@ -93,20 +98,67 @@ model User {
   @@map("users")
 }
 
-/// Per-user preferences. Add new typed columns here as settings grow.
+/// Personal preferences only (org-level settings live on OrganizationSettings).
 model UserSettings {
   id String @id @default(uuid())
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// When true (DISTRIBUTOR): valid supplier submit auto-sets request to APPROVED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_settings")
+}
+
+model Organization {
+  id   String @id @default(uuid())
+  name String
+
+  members             OrganizationMember[]
+  settings            OrganizationSettings?
+  productRequests     ProductRequest[]
+  requirementTemplates RequirementTemplate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// One membership per user globally.
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role OrganizationMemberRole
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, role])
+  @@map("organization_members")
+}
+
+model OrganizationSettings {
+  id String @id @default(uuid())
+
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// When true, valid supplier submit auto-sets request to APPROVED
   autoApproveProductRequests Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("user_settings")
+  @@map("organization_settings")
 }
 
 model RefreshToken {
@@ -124,7 +176,7 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-/// Compliance product request (distributor/admin → supplier)
+/// Compliance product request (organization manager → supplier)
 model ProductRequest {
   id              String        @id @default(uuid())
   name            String
@@ -135,8 +187,11 @@ model ProductRequest {
   rejectionReason String?
   publicSlug      String        @unique @default(uuid())
 
-  distributorId String
-  distributor   User   @relation("ProductDistributor", fields: [distributorId], references: [id], onDelete: Restrict)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  createdById String?
+  createdBy   User?   @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   supplierId String
   supplier   User   @relation("ProductSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
@@ -159,11 +214,12 @@ model ProductRequest {
   deletedAt DateTime?
 
   @@index([supplierId, isDeleted, status])
-  @@index([distributorId, isDeleted, status])
+  @@index([organizationId, isDeleted, status])
   @@index([isDeleted, deletedAt])
   @@index([isDeleted, status, createdAt])
   @@index([status])
   @@index([templateId])
+  @@index([createdById])
   @@map("product_requests")
 }
 
@@ -171,8 +227,8 @@ model RequirementTemplate {
   id   String @id @default(uuid())
   name String
 
-  distributorId String
-  distributor   User   @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   documents RequirementTemplateDocument[]
   fields    RequirementTemplateField[]
@@ -182,8 +238,8 @@ model RequirementTemplate {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([distributorId, name])
-  @@index([distributorId])
+  @@unique([organizationId, name])
+  @@index([organizationId])
   @@map("requirement_templates")
 }
 
@@ -232,7 +288,7 @@ model RequirementTemplateField {
   @@map("requirement_template_fields")
 }
 
-/// Per-product document upload keyed to a template document row (template is source of truth).
+/// Per-product document upload keyed to a template document row.
 model ProductDocumentAnswer {
   id String @id @default(uuid())
 
@@ -253,7 +309,7 @@ model ProductDocumentAnswer {
   @@map("product_document_answers")
 }
 
-/// Per-product field value keyed to a template field row (template is source of truth).
+/// Per-product field value keyed to a template field row.
 model ProductFieldAnswer {
   id String @id @default(uuid())
 

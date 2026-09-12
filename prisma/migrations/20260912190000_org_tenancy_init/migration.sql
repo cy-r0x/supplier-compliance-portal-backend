@@ -1,5 +1,8 @@
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('SUPER_ADMIN', 'DISTRIBUTOR', 'SUPPLIER');
+CREATE TYPE "Role" AS ENUM ('SUPER_ADMIN', 'USER', 'SUPPLIER');
+
+-- CreateEnum
+CREATE TYPE "OrganizationMemberRole" AS ENUM ('MANAGER', 'MEMBER');
 
 -- CreateEnum
 CREATE TYPE "ProductStatus" AS ENUM ('PENDING', 'SUBMITTED', 'REJECTED', 'APPROVED');
@@ -38,11 +41,43 @@ CREATE TABLE "users" (
 CREATE TABLE "user_settings" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "autoApproveProductRequests" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "user_settings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "organizations" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "organizations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "organization_members" (
+    "id" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "role" "OrganizationMemberRole" NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "organization_members_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "organization_settings" (
+    "id" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "autoApproveProductRequests" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "organization_settings_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -68,7 +103,8 @@ CREATE TABLE "product_requests" (
     "status" "ProductStatus" NOT NULL DEFAULT 'PENDING',
     "rejectionReason" TEXT,
     "publicSlug" TEXT NOT NULL,
-    "distributorId" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "createdById" TEXT,
     "supplierId" TEXT NOT NULL,
     "templateId" TEXT NOT NULL,
     "isDeleted" BOOLEAN NOT NULL DEFAULT false,
@@ -85,7 +121,7 @@ CREATE TABLE "product_requests" (
 CREATE TABLE "requirement_templates" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "distributorId" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -188,6 +224,18 @@ CREATE INDEX "users_createdById_idx" ON "users"("createdById");
 CREATE UNIQUE INDEX "user_settings_userId_key" ON "user_settings"("userId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "organizations_name_key" ON "organizations"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "organization_members_userId_key" ON "organization_members"("userId");
+
+-- CreateIndex
+CREATE INDEX "organization_members_organizationId_role_idx" ON "organization_members"("organizationId", "role");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "organization_settings_organizationId_key" ON "organization_settings"("organizationId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "refresh_tokens_tokenHash_key" ON "refresh_tokens"("tokenHash");
 
 -- CreateIndex
@@ -203,7 +251,7 @@ CREATE UNIQUE INDEX "product_requests_publicSlug_key" ON "product_requests"("pub
 CREATE INDEX "product_requests_supplierId_isDeleted_status_idx" ON "product_requests"("supplierId", "isDeleted", "status");
 
 -- CreateIndex
-CREATE INDEX "product_requests_distributorId_isDeleted_status_idx" ON "product_requests"("distributorId", "isDeleted", "status");
+CREATE INDEX "product_requests_organizationId_isDeleted_status_idx" ON "product_requests"("organizationId", "isDeleted", "status");
 
 -- CreateIndex
 CREATE INDEX "product_requests_isDeleted_deletedAt_idx" ON "product_requests"("isDeleted", "deletedAt");
@@ -218,10 +266,13 @@ CREATE INDEX "product_requests_status_idx" ON "product_requests"("status");
 CREATE INDEX "product_requests_templateId_idx" ON "product_requests"("templateId");
 
 -- CreateIndex
-CREATE INDEX "requirement_templates_distributorId_idx" ON "requirement_templates"("distributorId");
+CREATE INDEX "product_requests_createdById_idx" ON "product_requests"("createdById");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "requirement_templates_distributorId_name_key" ON "requirement_templates"("distributorId", "name");
+CREATE INDEX "requirement_templates_organizationId_idx" ON "requirement_templates"("organizationId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "requirement_templates_organizationId_name_key" ON "requirement_templates"("organizationId", "name");
 
 -- CreateIndex
 CREATE INDEX "requirement_template_documents_templateId_idx" ON "requirement_template_documents"("templateId");
@@ -236,10 +287,10 @@ CREATE INDEX "requirement_template_fields_templateId_idx" ON "requirement_templa
 CREATE UNIQUE INDEX "requirement_template_fields_templateId_fieldType_customKey_key" ON "requirement_template_fields"("templateId", "fieldType", "customKey");
 
 -- CreateIndex
-CREATE INDEX "product_document_answers_templateDocumentId_idx" ON "product_document_answers"("templateDocumentId");
+CREATE INDEX "product_document_answers_productRequestId_templateDocumentI_idx" ON "product_document_answers"("productRequestId", "templateDocumentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "product_document_answers_productRequestId_templateDocumentI_key" ON "product_document_answers"("productRequestId", "templateDocumentId");
+CREATE INDEX "product_document_answers_templateDocumentId_idx" ON "product_document_answers"("templateDocumentId");
 
 -- CreateIndex
 CREATE INDEX "product_field_answers_templateFieldId_idx" ON "product_field_answers"("templateFieldId");
@@ -272,10 +323,22 @@ ALTER TABLE "users" ADD CONSTRAINT "users_createdById_fkey" FOREIGN KEY ("create
 ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "organization_settings" ADD CONSTRAINT "organization_settings_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_distributorId_fkey" FOREIGN KEY ("distributorId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -284,7 +347,7 @@ ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_supplierId_fkey"
 ALTER TABLE "product_requests" ADD CONSTRAINT "product_requests_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "requirement_templates"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "requirement_templates" ADD CONSTRAINT "requirement_templates_distributorId_fkey" FOREIGN KEY ("distributorId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "requirement_templates" ADD CONSTRAINT "requirement_templates_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "requirement_template_documents" ADD CONSTRAINT "requirement_template_documents_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "requirement_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;

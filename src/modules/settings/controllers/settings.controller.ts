@@ -1,12 +1,17 @@
 import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from '../../../infrastructure/auth/decorators/auth.decorator';
+import { Role } from '@prisma/client';
+import {
+  CurrentUser,
+  Roles,
+} from '../../../infrastructure/auth/decorators/auth.decorator';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { UpdateSettingsDto } from '../dto/update-settings.dto';
 import { SettingsService } from '../services/settings.service';
 
 @ApiTags('settings')
 @ApiBearerAuth()
+@Roles(Role.SUPER_ADMIN, Role.USER)
 @Controller('settings')
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}

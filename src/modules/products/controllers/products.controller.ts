@@ -58,7 +58,7 @@ export class ProductsController {
   }
 
   @Post()
-  @Roles(Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @UseInterceptors(
     AnyFilesInterceptor({
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -68,7 +68,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Create product request',
     description:
-      'DISTRIBUTOR only. Creates PENDING request with requirements, optional file prefills (uploaded via ObjectStorage), and REQUEST_CREATED notification. Document prefill files: docPrefill__{TYPE} or docPrefill__OTHER__{customKey}. Product photo: photo.',
+      'Organization manager only (or SUPER_ADMIN). Creates a PENDING request with requirements, optional file prefills, and a notification.',
   })
   @ApiBody({
     schema: {
@@ -104,7 +104,8 @@ export class ProductsController {
         },
         fieldRequirements: {
           type: 'string',
-          description: 'JSON array of field requirements (text prefills nested)',
+          description:
+            'JSON array of field requirements (text prefills nested)',
           example: JSON.stringify([
             {
               fieldType: FieldType.SAFETY_NOTICE_TEXT,
@@ -119,7 +120,7 @@ export class ProductsController {
           format: 'binary',
           description: 'Optional product photo',
         },
-        'docPrefill__PRODUCT_IMAGE': {
+        docPrefill__PRODUCT_IMAGE: {
           type: 'string',
           format: 'binary',
           description: 'Optional prefill file for PRODUCT_IMAGE requirement',
@@ -132,11 +133,7 @@ export class ProductsController {
     @CurrentUser() currentUser: JwtPayload,
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
-    return await this.productsService.create(
-      dto,
-      currentUser,
-      files ?? [],
-    );
+    return await this.productsService.create(dto, currentUser, files ?? []);
   }
 
   @Get(':id')
@@ -149,7 +146,7 @@ export class ProductsController {
   }
 
   @Patch(':id')
-  @Roles(Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @UseInterceptors(
     AnyFilesInterceptor({
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -167,7 +164,7 @@ export class ProductsController {
   }
 
   @Delete(':id')
-  @Roles(Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @ApiOperation({ summary: 'Soft-delete product request' })
   remove(
     @Param('id', ParseUUIDPipe) id: string,
@@ -199,7 +196,7 @@ export class ProductsController {
   }
 
   @Post(':id/approve')
-  @Roles(Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @ApiOperation({ summary: 'Approve submitted product request' })
   approve(
     @Param('id', ParseUUIDPipe) id: string,
@@ -209,7 +206,7 @@ export class ProductsController {
   }
 
   @Post(':id/reject')
-  @Roles(Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @ApiOperation({ summary: 'Reject submitted product request' })
   reject(
     @Param('id', ParseUUIDPipe) id: string,

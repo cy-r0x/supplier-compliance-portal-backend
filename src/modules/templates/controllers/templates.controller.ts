@@ -20,13 +20,15 @@ import { TemplatesService } from '../services/templates.service';
 
 @ApiTags('templates')
 @ApiBearerAuth()
-@Roles(Role.DISTRIBUTOR)
+@Roles(Role.SUPER_ADMIN, Role.USER)
 @Controller('templates')
 export class TemplatesController {
   constructor(private readonly templatesService: TemplatesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List requirement templates for the current distributor' })
+  @ApiOperation({
+    summary: 'List requirement templates for the current organization',
+  })
   list(@CurrentUser() currentUser: JwtPayload) {
     return this.templatesService.list(currentUser);
   }

@@ -15,9 +15,13 @@ import {
   RequirementLevel,
   Role,
 } from '@prisma/client';
-import { getPagination, parseSortQuery } from '../../../common/utils/query.util';
+import {
+  getPagination,
+  parseSortQuery,
+} from '../../../common/utils/query.util';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
 import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
+import { OrgAccessService } from '../../../infrastructure/org-access/org-access.service';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { TemplatesService } from '../../templates/services/templates.service';
 import {
@@ -45,15 +49,17 @@ export class ProductsService {
     private readonly prisma: PrismaService,
     private readonly objectStorageService: ObjectStorageService,
     private readonly templatesService: TemplatesService,
+    private readonly orgAccess: OrgAccessService,
   ) {}
 
   async findAll(currentUser: JwtPayload, query: ListProductsQueryDto) {
     const { page, limit, skip } = getPagination(query);
     const orderBy = parseSortQuery(query.sort, PRODUCT_SORT_FIELDS);
 
+    const scopeWhere = await this.scopeWhereForRole(currentUser);
     const where: Prisma.ProductRequestWhereInput = {
       isDeleted: false,
-      ...this.scopeWhereForRole(currentUser),
+      ...scopeWhere,
       ...(query.status ? { status: query.status } : {}),
       ...(query.search
         ? {
@@ -92,8 +98,8 @@ export class ProductsService {
           updatedAt: true,
           createdAt: true,
           templateId: true,
-          distributor: {
-            select: { id: true, name: true, email: true },
+          organization: {
+            select: { id: true, name: true },
           },
           supplier: {
             select: { id: true, name: true, email: true },
@@ -172,9 +178,10 @@ export class ProductsService {
     currentUser: JwtPayload,
     files: Express.Multer.File[],
   ) {
+    const membership = await this.orgAccess.requireManager(currentUser);
     const template = await this.templatesService.getOwnedTemplateOrThrow(
       dto.templateId,
-      currentUser.sub,
+      membership.organizationId,
     );
 
     const documentRequirements = template.documents.map((row) =>
@@ -184,7 +191,9 @@ export class ProductsService {
       const base = this.templateFieldToRequirementDto(row);
       const clientPrefill = dto.fieldRequirements.find((item) => {
         const customKey =
-          item.fieldType === FieldType.OTHER ? (item.customKey?.trim() ?? '') : '';
+          item.fieldType === FieldType.OTHER
+            ? (item.customKey?.trim() ?? '')
+            : '';
         return item.fieldType === row.fieldType && customKey === row.customKey;
       })?.prefill;
       return clientPrefill ? { ...base, prefill: clientPrefill } : base;
@@ -202,7 +211,9 @@ export class ProductsService {
     }
 
     if (supplier.role !== Role.SUPPLIER) {
-      throw new BadRequestException('supplierId must reference a SUPPLIER user');
+      throw new BadRequestException(
+        'supplierId must reference a SUPPLIER user',
+      );
     }
 
     const sku = dto.sku?.trim() || null;
@@ -239,11 +250,11 @@ export class ProductsService {
         data: {
           name: dto.name.trim(),
           sku,
-          price:
-            dto.price === undefined ? null : new Prisma.Decimal(dto.price),
+          price: dto.price === undefined ? null : new Prisma.Decimal(dto.price),
           photo: photoUrl,
           status: ProductStatus.PENDING,
-          distributorId: currentUser.sub,
+          organizationId: membership.organizationId,
+          createdById: currentUser.sub,
           supplierId: supplier.id,
           templateId: template.id,
         },
@@ -341,7 +352,7 @@ export class ProductsService {
 
   async findOne(id: string, currentUser: JwtPayload) {
     const product = await this.loadProductDetail(id);
-    this.assertPartyAccess(product, currentUser);
+    await this.assertPartyAccess(product, currentUser);
 
     const progress = this.computeRequiredProgress(
       product.documentRequirements.filter(
@@ -387,14 +398,14 @@ export class ProductsService {
     currentUser: JwtPayload,
     files: Express.Multer.File[],
   ) {
-    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+    const product = await this.getOwnedProduct(id, currentUser);
 
     if (product.status !== ProductStatus.PENDING) {
       throw new BadRequestException('Only PENDING requests can be updated');
     }
 
     const photo = files.find((file) => file.fieldname === 'photo');
-    const sku = dto.sku !== undefined ? (dto.sku.trim() || null) : product.sku;
+    const sku = dto.sku !== undefined ? dto.sku.trim() || null : product.sku;
     if (sku && sku !== product.sku) {
       const existingSku = await this.prisma.productRequest.findFirst({
         where: { sku, isDeleted: false, id: { not: id } },
@@ -562,10 +573,7 @@ export class ProductsService {
     const uploadedEntries = await Promise.all(
       [...prefillByRequirementKey.entries()].map(async ([key, file]) => {
         const fileUrl = await this.objectStorageService.uploadFile(file);
-        return [
-          key,
-          { fileUrl, fileName: file.originalname },
-        ] as const;
+        return [key, { fileUrl, fileName: file.originalname }] as const;
       }),
     );
 
@@ -573,7 +581,7 @@ export class ProductsService {
   }
 
   async remove(id: string, currentUser: JwtPayload) {
-    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+    const product = await this.getOwnedProduct(id, currentUser);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.productRequest.update({
@@ -616,7 +624,7 @@ export class ProductsService {
         },
         documentAnswers: true,
         fieldAnswers: true,
-        distributor: {
+        organization: {
           select: {
             id: true,
             settings: { select: { autoApproveProductRequests: true } },
@@ -645,12 +653,12 @@ export class ProductsService {
       {
         id: product.id,
         name: product.name,
-        distributorId: product.distributorId,
+        organizationId: product.organizationId,
         supplierId: product.supplierId,
         template: product.template,
         documentAnswers: product.documentAnswers,
         fieldAnswers: product.fieldAnswers,
-        distributor: product.distributor,
+        organization: product.organization,
       },
       dto,
       files,
@@ -658,7 +666,7 @@ export class ProductsService {
     );
 
     const autoApprove =
-      product.distributor.settings?.autoApproveProductRequests ?? false;
+      product.organization.settings?.autoApproveProductRequests ?? false;
 
     return {
       message: autoApprove
@@ -672,7 +680,7 @@ export class ProductsService {
     product: {
       id: string;
       name: string;
-      distributorId: string;
+      organizationId: string;
       supplierId: string;
       template: {
         documents: Array<{
@@ -695,7 +703,7 @@ export class ProductsService {
         templateFieldId: string;
         value: string;
       }>;
-      distributor: {
+      organization: {
         settings: { autoApproveProductRequests: boolean } | null;
       };
     },
@@ -850,16 +858,16 @@ export class ProductsService {
     product: {
       id: string;
       name: string;
-      distributorId: string;
+      organizationId: string;
       supplierId: string;
-      distributor: {
+      organization: {
         settings: { autoApproveProductRequests: boolean } | null;
       };
     },
     currentUser: JwtPayload,
   ) {
     const autoApprove =
-      product.distributor.settings?.autoApproveProductRequests ?? false;
+      product.organization.settings?.autoApproveProductRequests ?? false;
     const now = new Date();
 
     await this.prisma.$transaction(
@@ -875,16 +883,25 @@ export class ProductsService {
           },
         });
 
-        await tx.notification.create({
-          data: {
-            type: NotificationType.REQUEST_SUBMITTED,
-            title: 'Request submitted for review',
-            message: `${currentUser.name} submitted compliance for ${product.name}`,
-            creatorId: currentUser.sub,
-            receiverId: product.distributorId,
-            productRequestId: product.id,
+        const managers = await tx.organizationMember.findMany({
+          where: {
+            organizationId: product.organizationId,
+            role: 'MANAGER',
           },
+          select: { userId: true },
         });
+        if (managers.length > 0) {
+          await tx.notification.createMany({
+            data: managers.map((manager) => ({
+              type: NotificationType.REQUEST_SUBMITTED,
+              title: 'Request submitted for review',
+              message: `${currentUser.name} submitted compliance for ${product.name}`,
+              creatorId: currentUser.sub,
+              receiverId: manager.userId,
+              productRequestId: product.id,
+            })),
+          });
+        }
 
         if (autoApprove) {
           await tx.notification.create({
@@ -904,7 +921,7 @@ export class ProductsService {
   }
 
   async approve(id: string, currentUser: JwtPayload) {
-    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+    const product = await this.getOwnedProduct(id, currentUser);
 
     if (product.status !== ProductStatus.SUBMITTED) {
       throw new BadRequestException('Only SUBMITTED requests can be approved');
@@ -937,12 +954,8 @@ export class ProductsService {
     return { message: 'Product approved successfully', data: null };
   }
 
-  async reject(
-    id: string,
-    dto: RejectProductDto,
-    currentUser: JwtPayload,
-  ) {
-    const product = await this.getOwnedProduct(id, currentUser, Role.DISTRIBUTOR);
+  async reject(id: string, dto: RejectProductDto, currentUser: JwtPayload) {
+    const product = await this.getOwnedProduct(id, currentUser);
 
     if (product.status !== ProductStatus.SUBMITTED) {
       throw new BadRequestException('Only SUBMITTED requests can be rejected');
@@ -991,7 +1004,8 @@ export class ProductsService {
         rejectionReason: true,
         createdAt: true,
         updatedAt: true,
-        distributorId: true,
+        organizationId: true,
+        createdById: true,
         supplierId: true,
         templateId: true,
         template: {
@@ -1038,7 +1052,7 @@ export class ProductsService {
             value: true,
           },
         },
-        distributor: { select: { id: true, name: true, email: true } },
+        organization: { select: { id: true, name: true } },
         supplier: { select: { id: true, name: true, email: true } },
       },
     });
@@ -1109,11 +1123,7 @@ export class ProductsService {
     };
   }
 
-  private async getOwnedProduct(
-    id: string,
-    currentUser: JwtPayload,
-    ownerRole: 'DISTRIBUTOR',
-  ) {
+  private async getOwnedProduct(id: string, currentUser: JwtPayload) {
     const product = await this.prisma.productRequest.findFirst({
       where: { id, isDeleted: false },
       select: {
@@ -1122,7 +1132,7 @@ export class ProductsService {
         sku: true,
         photo: true,
         status: true,
-        distributorId: true,
+        organizationId: true,
         supplierId: true,
         templateId: true,
       },
@@ -1132,19 +1142,12 @@ export class ProductsService {
       throw new NotFoundException('Product request not found');
     }
 
-    if (currentUser.role === Role.SUPER_ADMIN) {
-      return product;
-    }
-
-    if (
-      ownerRole === 'DISTRIBUTOR' &&
-      currentUser.role === Role.DISTRIBUTOR &&
-      product.distributorId === currentUser.sub
-    ) {
-      return product;
-    }
-
-    throw new ForbiddenException('You do not have access to this product request');
+    await this.orgAccess.assertCanAccessProductOrg(
+      currentUser,
+      product.organizationId,
+      { requireManager: true },
+    );
+    return product;
   }
 
   private templateDocToRequirementDto(row: {
@@ -1293,17 +1296,11 @@ export class ProductsService {
     }
   }
 
-  private assertPartyAccess(
-    product: { distributorId: string; supplierId: string },
+  private async assertPartyAccess(
+    product: { organizationId: string; supplierId: string },
     currentUser: JwtPayload,
   ) {
     if (currentUser.role === Role.SUPER_ADMIN) {
-      return;
-    }
-    if (
-      currentUser.role === Role.DISTRIBUTOR &&
-      product.distributorId === currentUser.sub
-    ) {
       return;
     }
     if (
@@ -1312,7 +1309,16 @@ export class ProductsService {
     ) {
       return;
     }
-    throw new ForbiddenException('You do not have access to this product request');
+    if (currentUser.role === Role.USER) {
+      await this.orgAccess.assertCanAccessProductOrg(
+        currentUser,
+        product.organizationId,
+      );
+      return;
+    }
+    throw new ForbiddenException(
+      'You do not have access to this product request',
+    );
   }
 
   private parseFieldValues(
@@ -1357,17 +1363,16 @@ export class ProductsService {
     }
   }
 
-  private scopeWhereForRole(
+  private async scopeWhereForRole(
     currentUser: JwtPayload,
-  ): Prisma.ProductRequestWhereInput {
-    if (currentUser.role === Role.DISTRIBUTOR) {
-      return { distributorId: currentUser.sub };
-    }
+  ): Promise<Prisma.ProductRequestWhereInput> {
     if (currentUser.role === Role.SUPPLIER) {
       return { supplierId: currentUser.sub };
     }
-    // SUPER_ADMIN sees all non-deleted (caller already sets isDeleted)
-    return {};
+    const scope = await this.orgAccess.resolveOrgScopeForRead(currentUser);
+    if (scope === 'ALL') return {};
+    if (scope === 'NONE') return { id: '' };
+    return scope;
   }
 
   private computeRequiredProgress(
@@ -1377,14 +1382,13 @@ export class ProductsService {
     const docsCompleted = documentRequirements.filter(
       (row) => row.documents.length > 0,
     ).length;
-    const fieldsCompleted = fieldRequirements.filter(
-      (row) => Boolean(row.fieldValue?.value?.trim()),
+    const fieldsCompleted = fieldRequirements.filter((row) =>
+      Boolean(row.fieldValue?.value?.trim()),
     ).length;
 
     const completed = docsCompleted + fieldsCompleted;
     const total = documentRequirements.length + fieldRequirements.length;
-    const percent =
-      total === 0 ? 100 : Math.round((completed / total) * 100);
+    const percent = total === 0 ? 100 : Math.round((completed / total) * 100);
 
     return { completed, total, percent };
   }

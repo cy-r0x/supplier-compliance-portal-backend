@@ -30,14 +30,14 @@ import { UsersService } from '../services/users.service';
 @ApiBearerAuth()
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @Get()
-  @Roles(Role.SUPER_ADMIN, Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @ApiOperation({
     summary: 'List users',
     description:
-      'SUPER_ADMIN: all distributors/suppliers (optional role filter). DISTRIBUTOR: suppliers only.',
+      'SUPER_ADMIN: USER and SUPPLIER (optional role filter). USER manager: suppliers only.',
   })
   findAll(
     @CurrentUser() currentUser: JwtPayload,
@@ -47,13 +47,13 @@ export class UsersController {
   }
 
   @Get('me')
-  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiOperation({ summary: 'Get current user profile including organization' })
   getMe(@CurrentUser() currentUser: JwtPayload) {
     return this.usersService.getMe(currentUser);
   }
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.DISTRIBUTOR)
+  @Roles(Role.SUPER_ADMIN, Role.USER)
   @UseInterceptors(
     FileInterceptor('photo', {
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -63,15 +63,15 @@ export class UsersController {
   @ApiOperation({
     summary: 'Create user',
     description:
-      'SUPER_ADMIN can create DISTRIBUTOR or SUPPLIER. DISTRIBUTOR can create SUPPLIER only. Profile photo is accepted via Multer but ignored for now.',
+      'SUPER_ADMIN can create USER or SUPPLIER. Managers can create USER or SUPPLIER.',
   })
   @ApiBody({
     schema: {
       type: 'object',
       required: ['name', 'email', 'password', 'role'],
       properties: {
-        name: { type: 'string', example: 'Acme Distribution' },
-        email: { type: 'string', format: 'email', example: 'dist@acme.com' },
+        name: { type: 'string', example: 'Jane Manager' },
+        email: { type: 'string', format: 'email', example: 'jane@acme.com' },
         password: {
           type: 'string',
           minLength: 8,
@@ -79,12 +79,11 @@ export class UsersController {
         },
         role: {
           type: 'string',
-          enum: [Role.DISTRIBUTOR, Role.SUPPLIER],
+          enum: [Role.USER, Role.SUPPLIER],
         },
         photo: {
           type: 'string',
           format: 'binary',
-          description: 'Optional profile photo (ignored for now)',
         },
       },
     },
@@ -104,20 +103,13 @@ export class UsersController {
     }),
   )
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Update current user profile photo',
-    description: 'Any authenticated user can upload a new profile photo.',
-  })
+  @ApiOperation({ summary: 'Update current user profile photo' })
   @ApiBody({
     schema: {
       type: 'object',
       required: ['photo'],
       properties: {
-        photo: {
-          type: 'string',
-          format: 'binary',
-          description: 'Profile photo image file',
-        },
+        photo: { type: 'string', format: 'binary' },
       },
     },
   })

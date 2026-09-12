@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,10 +8,12 @@ import {
   DocumentType,
   FieldType,
   NotificationType,
+  OrganizationMemberRole,
   ProductStatus,
   Role,
 } from '@prisma/client';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { OrgAccessService } from '../../../infrastructure/org-access/org-access.service';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import {
   CreateRequirementTemplateDto,
@@ -26,13 +27,16 @@ import {
 
 @Injectable()
 export class TemplatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly orgAccess: OrgAccessService,
+  ) {}
 
   async list(currentUser: JwtPayload) {
-    this.assertDistributor(currentUser);
+    const scope = await this.orgAccess.resolveOrgScopeForRead(currentUser);
 
     const templates = await this.prisma.requirementTemplate.findMany({
-      where: { distributorId: currentUser.sub },
+      where: scope === 'ALL' ? {} : scope === 'NONE' ? { id: '' } : scope,
       select: {
         id: true,
         name: true,
@@ -62,8 +66,8 @@ export class TemplatesService {
   }
 
   async findOne(id: string, currentUser: JwtPayload) {
-    this.assertDistributor(currentUser);
-    const template = await this.getOwnedTemplate(id, currentUser.sub);
+    const organizationId = await this.organizationIdForRead(currentUser);
+    const template = await this.getOwnedTemplate(id, organizationId);
 
     return {
       message: 'Template retrieved successfully',
@@ -72,8 +76,8 @@ export class TemplatesService {
   }
 
   async getImpact(id: string, currentUser: JwtPayload) {
-    this.assertDistributor(currentUser);
-    await this.getOwnedTemplate(id, currentUser.sub);
+    const organizationId = await this.organizationIdForRead(currentUser);
+    await this.getOwnedTemplate(id, organizationId);
 
     const products = await this.prisma.productRequest.findMany({
       where: {
@@ -114,7 +118,7 @@ export class TemplatesService {
   }
 
   async create(dto: CreateRequirementTemplateDto, currentUser: JwtPayload) {
-    this.assertDistributor(currentUser);
+    const membership = await this.orgAccess.requireManager(currentUser);
     this.assertTemplateKeys(dto.documents, dto.fields);
 
     const name = dto.name.trim();
@@ -124,7 +128,7 @@ export class TemplatesService {
 
     const existing = await this.prisma.requirementTemplate.findFirst({
       where: {
-        distributorId: currentUser.sub,
+        organizationId: membership.organizationId,
         name: { equals: name, mode: 'insensitive' },
       },
       select: { id: true },
@@ -132,14 +136,14 @@ export class TemplatesService {
 
     if (existing) {
       throw new ConflictException(
-        'A template with this name already exists for your account',
+        'A template with this name already exists for your organization',
       );
     }
 
     const template = await this.prisma.requirementTemplate.create({
       data: {
         name,
-        distributorId: currentUser.sub,
+        organizationId: membership.organizationId,
         documents: {
           create: dto.documents.map((row) => this.toDocumentCreate(row)),
         },
@@ -164,10 +168,10 @@ export class TemplatesService {
     dto: UpdateRequirementTemplateDto,
     currentUser: JwtPayload,
   ) {
-    this.assertDistributor(currentUser);
+    const membership = await this.orgAccess.requireManager(currentUser);
     this.assertTemplateKeys(dto.documents, dto.fields);
 
-    const existing = await this.getOwnedTemplate(id, currentUser.sub);
+    const existing = await this.getOwnedTemplate(id, membership.organizationId);
     const name = dto.name.trim();
     if (!name) {
       throw new BadRequestException('Template name is required');
@@ -175,7 +179,7 @@ export class TemplatesService {
 
     const nameConflict = await this.prisma.requirementTemplate.findFirst({
       where: {
-        distributorId: currentUser.sub,
+        organizationId: membership.organizationId,
         name: { equals: name, mode: 'insensitive' },
         id: { not: id },
       },
@@ -184,7 +188,7 @@ export class TemplatesService {
 
     if (nameConflict) {
       throw new ConflictException(
-        'A template with this name already exists for your account',
+        'A template with this name already exists for your organization',
       );
     }
 
@@ -201,6 +205,15 @@ export class TemplatesService {
         supplierId: true,
       },
     });
+    const managerIds = (
+      await this.prisma.organizationMember.findMany({
+        where: {
+          organizationId: membership.organizationId,
+          role: OrganizationMemberRole.MANAGER,
+        },
+        select: { userId: true },
+      })
+    ).map((member) => member.userId);
 
     const desiredDocs = dto.documents.map((row) => this.toDocumentCreate(row));
     const desiredFields = dto.fields.map((row) => this.toFieldCreate(row));
@@ -315,7 +328,8 @@ export class TemplatesService {
 
         if (
           requirementsChanged &&
-          dto.relatedProductsAction === RelatedProductsAction.NOTIFY_AND_RESET &&
+          dto.relatedProductsAction ===
+            RelatedProductsAction.NOTIFY_AND_RESET &&
           relatedProducts.length > 0
         ) {
           const resetIds = relatedProducts
@@ -339,14 +353,24 @@ export class TemplatesService {
           }
 
           await tx.notification.createMany({
-            data: relatedProducts.map((product) => ({
-              type: NotificationType.REQUEST_REQUIREMENTS_UPDATED,
-              title: 'Compliance requirements updated',
-              message: `${currentUser.name} updated requirements for ${product.name}. Please review and resubmit if needed.`,
-              creatorId: currentUser.sub,
-              receiverId: product.supplierId,
-              productRequestId: product.id,
-            })),
+            data: relatedProducts.flatMap((product) => [
+              {
+                type: NotificationType.REQUEST_REQUIREMENTS_UPDATED,
+                title: 'Compliance requirements updated',
+                message: `${currentUser.name} updated requirements for ${product.name}. Please review and resubmit if needed.`,
+                creatorId: currentUser.sub,
+                receiverId: product.supplierId,
+                productRequestId: product.id,
+              },
+              ...managerIds.map((receiverId) => ({
+                type: NotificationType.REQUEST_REQUIREMENTS_UPDATED,
+                title: 'Compliance requirements updated',
+                message: `Requirements for ${product.name} were updated and the request may require resubmission.`,
+                creatorId: currentUser.sub,
+                receiverId,
+                productRequestId: product.id,
+              })),
+            ]),
           });
         }
 
@@ -371,13 +395,13 @@ export class TemplatesService {
     };
   }
 
-  async getOwnedTemplateOrThrow(id: string, distributorId: string) {
-    return this.getOwnedTemplate(id, distributorId);
+  async getOwnedTemplateOrThrow(id: string, organizationId: string) {
+    return this.getOwnedTemplate(id, organizationId);
   }
 
-  private async getOwnedTemplate(id: string, distributorId: string) {
+  private async getOwnedTemplate(id: string, organizationId: string | null) {
     const template = await this.prisma.requirementTemplate.findFirst({
-      where: { id, distributorId },
+      where: { id, ...(organizationId ? { organizationId } : {}) },
       include: {
         documents: { orderBy: { type: 'asc' } },
         fields: { orderBy: { fieldType: 'asc' } },
@@ -526,7 +550,9 @@ export class TemplatesService {
             visibility: row.visibility,
           }))
           .sort((a, b) =>
-            `${a.type}::${a.customKey}`.localeCompare(`${b.type}::${b.customKey}`),
+            `${a.type}::${a.customKey}`.localeCompare(
+              `${b.type}::${b.customKey}`,
+            ),
           ),
       );
 
@@ -561,9 +587,9 @@ export class TemplatesService {
     );
   }
 
-  private assertDistributor(currentUser: JwtPayload) {
-    if (currentUser.role !== Role.DISTRIBUTOR) {
-      throw new ForbiddenException('Only distributors can manage templates');
-    }
+  private async organizationIdForRead(currentUser: JwtPayload) {
+    if (currentUser.role === Role.SUPER_ADMIN) return null;
+    const membership = await this.orgAccess.requireMembership(currentUser);
+    return membership.organizationId;
   }
 }

@@ -8,6 +8,7 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { HealthController } from './health/health.controller';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PublicModule } from './modules/public/public.module';
 import { SettingsModule } from './modules/settings/settings.module';
@@ -20,6 +21,7 @@ import { UsersModule } from './modules/users/users.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    OrganizationsModule,
     ProductsModule,
     NotificationsModule,
     PublicModule,

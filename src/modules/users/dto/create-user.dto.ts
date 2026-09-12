@@ -2,16 +2,16 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 
-export const CREATEABLE_USER_ROLES = [Role.DISTRIBUTOR, Role.SUPPLIER] as const;
+export const CREATEABLE_USER_ROLES = [Role.USER, Role.SUPPLIER] as const;
 export type CreateableUserRole = (typeof CREATEABLE_USER_ROLES)[number];
 
 export class CreateUserDto {
-  @ApiProperty({ example: 'Acme Distribution' })
+  @ApiProperty({ example: 'Jane Manager' })
   @IsString()
   @MinLength(1)
   name!: string;
 
-  @ApiProperty({ example: 'dist@acme.com' })
+  @ApiProperty({ example: 'jane@acme.com' })
   @IsEmail()
   email!: string;
 
@@ -26,7 +26,7 @@ export class CreateUserDto {
 
   @ApiProperty({
     enum: CREATEABLE_USER_ROLES,
-    example: Role.DISTRIBUTOR,
+    example: Role.USER,
     description: 'SUPER_ADMIN cannot be created via this endpoint',
   })
   @IsIn(CREATEABLE_USER_ROLES, {
@@ -34,11 +34,10 @@ export class CreateUserDto {
   })
   role!: CreateableUserRole;
 
-
   @ApiProperty({
     type: 'string',
     format: 'binary',
-    description: 'Optional profile photo (ignored for now)',
+    description: 'Optional profile photo',
   })
   @IsOptional()
   photo?: Express.Multer.File;

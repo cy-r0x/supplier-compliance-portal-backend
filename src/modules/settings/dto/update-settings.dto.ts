@@ -4,7 +4,7 @@ import { IsBoolean, IsOptional } from 'class-validator';
 export class UpdateSettingsDto {
   @ApiPropertyOptional({
     description:
-      'DISTRIBUTOR only. When true, supplier submissions are auto-approved.',
+      'Organization manager only. When true, supplier submissions are auto-approved.',
   })
   @IsOptional()
   @IsBoolean()
