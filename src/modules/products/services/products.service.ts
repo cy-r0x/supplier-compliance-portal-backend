@@ -269,16 +269,18 @@ export class ProductsService {
 
       for (const templateDoc of template.documents) {
         const key = `${templateDoc.type}::${templateDoc.customKey}`;
-        const prefill = uploadedPrefills.get(key);
-        if (!prefill) {
+        const prefills = uploadedPrefills.get(key);
+        if (!prefills?.length) {
           continue;
         }
-        documentAnswersToCreate.push({
-          productRequestId: productRequest.id,
-          templateDocumentId: templateDoc.id,
-          fileUrl: prefill.fileUrl,
-          fileName: prefill.fileName,
-        });
+        for (const prefill of prefills) {
+          documentAnswersToCreate.push({
+            productRequestId: productRequest.id,
+            templateDocumentId: templateDoc.id,
+            fileUrl: prefill.fileUrl,
+            fileName: prefill.fileName,
+          });
+        }
       }
 
       if (documentAnswersToCreate.length > 0) {
@@ -287,13 +289,13 @@ export class ProductsService {
         });
       }
 
-      const productImagePrefill = uploadedPrefills.get(
+      const productImagePrefills = uploadedPrefills.get(
         `${DocumentType.PRODUCT_IMAGE}::`,
       );
-      if (productImagePrefill) {
+      if (productImagePrefills?.[0]) {
         await tx.productRequest.update({
           where: { id: productRequest.id },
-          data: { photo: productImagePrefill.fileUrl },
+          data: { photo: productImagePrefills[0].fileUrl },
         });
       }
 
@@ -445,7 +447,7 @@ export class ProductsService {
             );
           })()
         : Promise.resolve(
-            new Map<string, { fileUrl: string; fileName: string }>(),
+            new Map<string, Array<{ fileUrl: string; fileName: string }>>(),
           ),
       hasPrefillUpdate
         ? this.prisma.productRequest.findUnique({
@@ -516,16 +518,17 @@ export class ProductsService {
             },
             uploadedPrefills,
             dto.fieldRequirements ?? [],
+            this.parseRemovedDocumentAnswerIds(dto.removedDocumentAnswerIds),
           );
         }
 
-        const productImagePrefill = uploadedPrefills.get(
+        const productImagePrefills = uploadedPrefills.get(
           `${DocumentType.PRODUCT_IMAGE}::`,
         );
-        if (productImagePrefill) {
+        if (productImagePrefills?.[0]) {
           await tx.productRequest.update({
             where: { id },
-            data: { photo: productImagePrefill.fileUrl },
+            data: { photo: productImagePrefills[0].fileUrl },
           });
         }
       },
@@ -539,7 +542,7 @@ export class ProductsService {
     documentRequirements: DocumentRequirementDto[],
     docPrefillFiles: Express.Multer.File[],
   ) {
-    const prefillByRequirementKey = new Map<string, Express.Multer.File>();
+    const prefillByRequirementKey = new Map<string, Express.Multer.File[]>();
 
     for (const file of docPrefillFiles) {
       const parsed = parseDocumentPrefillFieldName(file.fieldname);
@@ -562,18 +565,20 @@ export class ProductsService {
       }
 
       const key = `${parsed.type}::${parsed.customKey}`;
-      if (prefillByRequirementKey.has(key)) {
-        throw new BadRequestException(
-          `Duplicate prefill file for ${file.fieldname}`,
-        );
-      }
-      prefillByRequirementKey.set(key, file);
+      const bucket = prefillByRequirementKey.get(key) ?? [];
+      bucket.push(file);
+      prefillByRequirementKey.set(key, bucket);
     }
 
     const uploadedEntries = await Promise.all(
-      [...prefillByRequirementKey.entries()].map(async ([key, file]) => {
-        const fileUrl = await this.objectStorageService.uploadFile(file);
-        return [key, { fileUrl, fileName: file.originalname }] as const;
+      [...prefillByRequirementKey.entries()].map(async ([key, files]) => {
+        const uploaded = await Promise.all(
+          files.map(async (file) => ({
+            fileUrl: await this.objectStorageService.uploadFile(file),
+            fileName: file.originalname,
+          })),
+        );
+        return [key, uploaded] as const;
       }),
     );
 
@@ -1208,18 +1213,33 @@ export class ProductsService {
         value: string;
       }>;
     },
-    uploadedPrefills: Map<string, { fileUrl: string; fileName: string }>,
+    uploadedPrefills: Map<
+      string,
+      Array<{ fileUrl: string; fileName: string }>
+    >,
     fieldRequirements: FieldRequirementDto[],
+    removedDocumentAnswerIds: string[] = [],
   ) {
-    const answersByDocId = new Map<string, { id: string }>();
-    for (const row of existing.documentAnswers) {
-      if (!answersByDocId.has(row.templateDocumentId)) {
-        answersByDocId.set(row.templateDocumentId, row);
-      }
-    }
     const answersByFieldId = new Map(
       existing.fieldAnswers.map((row) => [row.templateFieldId, row]),
     );
+
+    if (removedDocumentAnswerIds.length > 0) {
+      const removable = existing.documentAnswers.filter((row) =>
+        removedDocumentAnswerIds.includes(row.id),
+      );
+      if (removable.length !== removedDocumentAnswerIds.length) {
+        throw new BadRequestException(
+          'One or more removedDocumentAnswerIds do not belong to this product',
+        );
+      }
+      await tx.productDocumentAnswer.deleteMany({
+        where: {
+          id: { in: removedDocumentAnswerIds },
+          productRequestId,
+        },
+      });
+    }
 
     const documentsToCreate: Array<{
       productRequestId: string;
@@ -1230,19 +1250,10 @@ export class ProductsService {
 
     for (const templateDoc of existing.template.documents) {
       const key = `${templateDoc.type}::${templateDoc.customKey}`;
-      const prefill = uploadedPrefills.get(key);
-      if (!prefill) continue;
+      const prefills = uploadedPrefills.get(key);
+      if (!prefills?.length) continue;
 
-      const existingAnswer = answersByDocId.get(templateDoc.id);
-      if (existingAnswer) {
-        await tx.productDocumentAnswer.update({
-          where: { id: existingAnswer.id },
-          data: {
-            fileUrl: prefill.fileUrl,
-            fileName: prefill.fileName,
-          },
-        });
-      } else {
+      for (const prefill of prefills) {
         documentsToCreate.push({
           productRequestId,
           templateDocumentId: templateDoc.id,

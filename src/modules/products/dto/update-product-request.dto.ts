@@ -58,4 +58,13 @@ export class UpdateProductRequestDto {
   @ValidateNested({ each: true })
   @Type(() => FieldRequirementDto)
   fieldRequirements?: FieldRequirementDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of existing document answer IDs to remove when updating prefills',
+    example: '["uuid-1","uuid-2"]',
+  })
+  @IsOptional()
+  @IsString()
+  removedDocumentAnswerIds?: string;
 }

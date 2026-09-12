@@ -261,15 +261,13 @@ export class UsersService {
       return;
     }
 
-    // Managers may create USER (invite) via users API when attaching — keep supplier create for managers
-    if (actorRole === Role.USER && targetRole === Role.SUPPLIER) {
-      return;
-    }
-
+    // Org managers may create unassigned USER accounts for team invites only.
     if (actorRole === Role.USER && targetRole === Role.USER) {
       return;
     }
 
-    throw new ForbiddenException('You cannot create this user role');
+    throw new ForbiddenException(
+      'Only SUPER_ADMIN can create suppliers. Managers cannot create this user role',
+    );
   }
 }

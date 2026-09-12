@@ -63,7 +63,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Create user',
     description:
-      'SUPER_ADMIN can create USER or SUPPLIER. Managers can create USER or SUPPLIER.',
+      'SUPER_ADMIN can create USER or SUPPLIER. Org managers can create USER only.',
   })
   @ApiBody({
     schema: {
