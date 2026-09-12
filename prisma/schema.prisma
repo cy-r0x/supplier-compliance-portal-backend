@@ -77,6 +77,8 @@ model User {
   requestedProducts ProductRequest[] @relation("ProductDistributor")
   suppliedProducts  ProductRequest[] @relation("ProductSupplier")
 
+  requirementTemplates RequirementTemplate[]
+
   createdNotifications  Notification[]   @relation("NotificationCreator")
   receivedNotifications Notification[]   @relation("NotificationReceiver")
   sentMessages          ProductMessage[] @relation("MessageSender")
@@ -139,16 +141,18 @@ model ProductRequest {
   supplierId String
   supplier   User   @relation("ProductSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
 
-  notifications        Notification[]
-  documentRequirements ProductDocumentRequirement[]
-  fieldRequirements    ProductFieldRequirement[]
-  messages             ProductMessage[]
+  templateId String
+  template   RequirementTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  notifications   Notification[]
+  documentAnswers ProductDocumentAnswer[]
+  fieldAnswers    ProductFieldAnswer[]
+  messages        ProductMessage[]
 
   isDeleted Boolean @default(false)
 
-  submittedAt           DateTime?
-  reviewedAt            DateTime?
-  requirementsUpdatedAt DateTime?
+  submittedAt DateTime?
+  reviewedAt  DateTime?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -159,14 +163,35 @@ model ProductRequest {
   @@index([isDeleted, deletedAt])
   @@index([isDeleted, status, createdAt])
   @@index([status])
+  @@index([templateId])
   @@map("product_requests")
 }
 
-model ProductDocumentRequirement {
+model RequirementTemplate {
+  id   String @id @default(uuid())
+  name String
+
+  distributorId String
+  distributor   User   @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+
+  documents RequirementTemplateDocument[]
+  fields    RequirementTemplateField[]
+
+  productRequests ProductRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([distributorId, name])
+  @@index([distributorId])
+  @@map("requirement_templates")
+}
+
+model RequirementTemplateDocument {
   id String @id @default(uuid())
 
-  productRequestId String
-  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+  templateId String
+  template   RequirementTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   type      DocumentType
   customKey String       @default("")
@@ -175,37 +200,21 @@ model ProductDocumentRequirement {
   level      RequirementLevel
   visibility DocumentVisibility
 
-  document ProductDocument?
+  answers ProductDocumentAnswer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([productRequestId, type, customKey])
-  @@index([productRequestId, level])
-  @@index([productRequestId, visibility])
-  @@map("product_document_requirements")
+  @@unique([templateId, type, customKey])
+  @@index([templateId])
+  @@map("requirement_template_documents")
 }
 
-model ProductDocument {
+model RequirementTemplateField {
   id String @id @default(uuid())
 
-  requirementId String                     @unique
-  requirement   ProductDocumentRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
-
-  fileUrl  String
-  fileName String?
-
-  uploadedAt DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@map("product_documents")
-}
-
-model ProductFieldRequirement {
-  id String @id @default(uuid())
-
-  productRequestId String
-  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+  templateId String
+  template   RequirementTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   fieldType  FieldType
   customKey  String             @default("")
@@ -213,29 +222,55 @@ model ProductFieldRequirement {
   level      RequirementLevel
   visibility DocumentVisibility
 
-  fieldValue ProductFieldValue?
+  answers ProductFieldAnswer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([productRequestId, fieldType, customKey])
-  @@index([productRequestId, level])
-  @@index([productRequestId, visibility])
-  @@map("product_field_requirements")
+  @@unique([templateId, fieldType, customKey])
+  @@index([templateId])
+  @@map("requirement_template_fields")
 }
 
-model ProductFieldValue {
+/// Per-product document upload keyed to a template document row (template is source of truth).
+model ProductDocumentAnswer {
   id String @id @default(uuid())
 
-  requirementId String                  @unique
-  requirement   ProductFieldRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  productRequestId String
+  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+
+  templateDocumentId String
+  templateDocument   RequirementTemplateDocument @relation(fields: [templateDocumentId], references: [id], onDelete: Restrict)
+
+  fileUrl  String
+  fileName String?
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([productRequestId, templateDocumentId])
+  @@index([templateDocumentId])
+  @@map("product_document_answers")
+}
+
+/// Per-product field value keyed to a template field row (template is source of truth).
+model ProductFieldAnswer {
+  id String @id @default(uuid())
+
+  productRequestId String
+  productRequest   ProductRequest @relation(fields: [productRequestId], references: [id], onDelete: Cascade)
+
+  templateFieldId String
+  templateField   RequirementTemplateField @relation(fields: [templateFieldId], references: [id], onDelete: Restrict)
 
   value String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("product_field_values")
+  @@unique([productRequestId, templateFieldId])
+  @@index([templateFieldId])
+  @@map("product_field_answers")
 }
 
 model ProductMessage {

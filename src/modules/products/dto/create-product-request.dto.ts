@@ -150,9 +150,16 @@ export class CreateProductRequestDto {
   supplierId!: string;
 
   @ApiProperty({
+    example: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    description: 'Requirement template owned by the current distributor',
+  })
+  @IsUUID()
+  templateId!: string;
+
+  @ApiProperty({
     type: [DocumentRequirementDto],
     description:
-      'Ask matrix for documents. When using multipart, send as a JSON string. Prefill files separately as docPrefill__{TYPE} or docPrefill__OTHER__{customKey}.',
+      'Ask matrix for documents. When using multipart, send as a JSON string. Prefill files separately as docPrefill__{TYPE} or docPrefill__OTHER__{customKey}. Level/visibility are taken from the template.',
   })
   @Transform(({ value }) =>
     parseJsonDtoArray(DocumentRequirementDto, { value }),
@@ -165,7 +172,7 @@ export class CreateProductRequestDto {
   @ApiProperty({
     type: [FieldRequirementDto],
     description:
-      'Ask matrix for fields. When using multipart, send as a JSON string.',
+      'Ask matrix for fields. When using multipart, send as a JSON string. Level/visibility are taken from the template; prefills are still applied.',
   })
   @Transform(({ value }) => parseJsonDtoArray(FieldRequirementDto, { value }))
   @IsArray()

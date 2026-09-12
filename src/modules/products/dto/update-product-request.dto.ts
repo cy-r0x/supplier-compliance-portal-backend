@@ -36,7 +36,7 @@ export class UpdateProductRequestDto {
   @ApiPropertyOptional({
     type: [DocumentRequirementDto],
     description:
-      'When provided with fieldRequirements, updates the ask matrix while PENDING.',
+      'Prefills only (ask matrix comes from the product template). When provided with fieldRequirements while PENDING, syncs document prefill uploads into answer tables.',
   })
   @IsOptional()
   @Transform(({ value }) =>
@@ -50,7 +50,7 @@ export class UpdateProductRequestDto {
   @ApiPropertyOptional({
     type: [FieldRequirementDto],
     description:
-      'When provided with documentRequirements, updates the ask matrix while PENDING.',
+      'Prefills only (ask matrix comes from the product template). When provided with documentRequirements while PENDING, syncs field prefills into answer tables.',
   })
   @IsOptional()
   @Transform(({ value }) => parseJsonDtoArray(FieldRequirementDto, { value }))

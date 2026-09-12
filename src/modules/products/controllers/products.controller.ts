@@ -76,6 +76,7 @@ export class ProductsController {
       required: [
         'name',
         'supplierId',
+        'templateId',
         'documentRequirements',
         'fieldRequirements',
       ],
@@ -84,6 +85,7 @@ export class ProductsController {
         sku: { type: 'string', example: 'WP-001' },
         price: { type: 'number', example: 19.99 },
         supplierId: { type: 'string', format: 'uuid' },
+        templateId: { type: 'string', format: 'uuid' },
         documentRequirements: {
           type: 'string',
           description: 'JSON array of document requirements',

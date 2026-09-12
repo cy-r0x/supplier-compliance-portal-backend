@@ -26,22 +26,39 @@ export class PublicService {
         reviewedAt: true,
         rejectionReason: true,
         supplier: { select: { name: true } },
-        documentRequirements: {
-          where: { visibility: DocumentVisibility.PUBLIC },
+        template: {
           select: {
-            type: true,
-            customKey: true,
-            label: true,
-            document: { select: { fileUrl: true, fileName: true } },
+            documents: {
+              where: { visibility: DocumentVisibility.PUBLIC },
+              select: {
+                id: true,
+                type: true,
+                customKey: true,
+                label: true,
+              },
+            },
+            fields: {
+              where: { visibility: DocumentVisibility.PUBLIC },
+              select: {
+                id: true,
+                fieldType: true,
+                customKey: true,
+                label: true,
+              },
+            },
           },
         },
-        fieldRequirements: {
-          where: { visibility: DocumentVisibility.PUBLIC },
+        documentAnswers: {
           select: {
-            fieldType: true,
-            customKey: true,
-            label: true,
-            fieldValue: { select: { value: true } },
+            templateDocumentId: true,
+            fileUrl: true,
+            fileName: true,
+          },
+        },
+        fieldAnswers: {
+          select: {
+            templateFieldId: true,
+            value: true,
           },
         },
       },
@@ -51,24 +68,43 @@ export class PublicService {
       throw new NotFoundException('Public product not found');
     }
 
-    const documents = product.documentRequirements
-      .filter((row) => row.document?.fileUrl)
-      .map((row) => ({
-        type: row.type,
-        customKey: row.customKey,
-        label: row.label,
-        fileUrl: row.document!.fileUrl,
-        fileName: row.document!.fileName,
-      }));
+    if (!product.template) {
+      throw new NotFoundException('Public product not found');
+    }
 
-    const textFields = product.fieldRequirements
-      .filter((row) => row.fieldValue?.value?.trim())
-      .map((row) => ({
-        fieldType: row.fieldType,
-        customKey: row.customKey,
-        label: row.label,
-        value: row.fieldValue!.value,
-      }));
+    const answersByDocId = new Map(
+      product.documentAnswers.map((row) => [row.templateDocumentId, row]),
+    );
+    const answersByFieldId = new Map(
+      product.fieldAnswers.map((row) => [row.templateFieldId, row]),
+    );
+
+    const documents = product.template.documents
+      .map((row) => {
+        const answer = answersByDocId.get(row.id);
+        if (!answer?.fileUrl) return null;
+        return {
+          type: row.type,
+          customKey: row.customKey,
+          label: row.label,
+          fileUrl: answer.fileUrl,
+          fileName: answer.fileName,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null);
+
+    const textFields = product.template.fields
+      .map((row) => {
+        const answer = answersByFieldId.get(row.id);
+        if (!answer?.value?.trim()) return null;
+        return {
+          fieldType: row.fieldType,
+          customKey: row.customKey,
+          label: row.label,
+          value: answer.value,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null);
 
     return {
       message: 'Public product retrieved successfully',

@@ -11,6 +11,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ProductsModule } from './modules/products/products.module';
 import { PublicModule } from './modules/public/public.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { TemplatesModule } from './modules/templates/templates.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -23,6 +24,7 @@ import { UsersModule } from './modules/users/users.module';
     NotificationsModule,
     PublicModule,
     SettingsModule,
+    TemplatesModule,
   ],
   controllers: [HealthController],
   providers: [
