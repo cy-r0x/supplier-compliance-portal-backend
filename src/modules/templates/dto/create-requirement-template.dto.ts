@@ -1,10 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  DocumentType,
-  DocumentVisibility,
-  FieldType,
-  RequirementLevel,
-} from '@prisma/client';
+import { DocumentType, FieldType, RequirementLevel } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -36,10 +31,6 @@ export class TemplateDocumentItemDto {
   @ApiProperty({ enum: RequirementLevel })
   @IsEnum(RequirementLevel)
   level!: RequirementLevel;
-
-  @ApiProperty({ enum: DocumentVisibility })
-  @IsEnum(DocumentVisibility)
-  visibility!: DocumentVisibility;
 }
 
 export class TemplateFieldItemDto {
@@ -61,10 +52,6 @@ export class TemplateFieldItemDto {
   @ApiProperty({ enum: RequirementLevel })
   @IsEnum(RequirementLevel)
   level!: RequirementLevel;
-
-  @ApiProperty({ enum: DocumentVisibility })
-  @IsEnum(DocumentVisibility)
-  visibility!: DocumentVisibility;
 }
 
 export class CreateRequirementTemplateDto {

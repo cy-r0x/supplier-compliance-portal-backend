@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DocumentType,
-  DocumentVisibility,
   FieldType,
   RequirementLevel,
 } from '@prisma/client';
@@ -76,13 +75,6 @@ export class DocumentRequirementDto {
   @ApiProperty({ enum: RequirementLevel, example: RequirementLevel.REQUIRED })
   @IsEnum(RequirementLevel)
   level!: RequirementLevel;
-
-  @ApiProperty({
-    enum: DocumentVisibility,
-    example: DocumentVisibility.PRIVATE,
-  })
-  @IsEnum(DocumentVisibility)
-  visibility!: DocumentVisibility;
 }
 
 export class FieldRequirementDto {
@@ -110,13 +102,6 @@ export class FieldRequirementDto {
   @ApiProperty({ enum: RequirementLevel, example: RequirementLevel.REQUIRED })
   @IsEnum(RequirementLevel)
   level!: RequirementLevel;
-
-  @ApiProperty({
-    enum: DocumentVisibility,
-    example: DocumentVisibility.PUBLIC,
-  })
-  @IsEnum(DocumentVisibility)
-  visibility!: DocumentVisibility;
 
   @ApiPropertyOptional({ type: FieldPrefillDto })
   @IsOptional()
@@ -159,7 +144,7 @@ export class CreateProductRequestDto {
   @ApiProperty({
     type: [DocumentRequirementDto],
     description:
-      'Ask matrix for documents. When using multipart, send as a JSON string. Prefill files separately as docPrefill__{TYPE} or docPrefill__OTHER__{customKey}. Level/visibility are taken from the template.',
+      'Ask matrix for documents. When using multipart, send as a JSON string. Prefill files separately as docPrefill__{TYPE} or docPrefill__OTHER__{customKey}. Level is taken from the template; answer visibility is supplier-owned.',
   })
   @Transform(({ value }) =>
     parseJsonDtoArray(DocumentRequirementDto, { value }),
@@ -172,7 +157,7 @@ export class CreateProductRequestDto {
   @ApiProperty({
     type: [FieldRequirementDto],
     description:
-      'Ask matrix for fields. When using multipart, send as a JSON string. Level/visibility are taken from the template; prefills are still applied.',
+      'Ask matrix for fields. When using multipart, send as a JSON string. Level is taken from the template; prefills are still applied. Answer visibility is supplier-owned.',
   })
   @Transform(({ value }) => parseJsonDtoArray(FieldRequirementDto, { value }))
   @IsArray()

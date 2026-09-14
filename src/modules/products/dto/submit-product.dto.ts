@@ -3,12 +3,32 @@ import { IsOptional, IsString } from 'class-validator';
 
 export class SubmitProductDto {
   @ApiPropertyOptional({
-    description: 'JSON array of { requirementId, value } for text fields',
-    example: '[{"requirementId":"uuid","value":"<p>text</p>"}]',
+    description:
+      'JSON array of { requirementId, value, visibility } for text fields. visibility defaults to PRIVATE when omitted.',
+    example:
+      '[{"requirementId":"uuid","value":"<p>text</p>","visibility":"PUBLIC"}]',
   })
   @IsOptional()
   @IsString()
   fieldValues?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of { requirementId, visibility } aligned with uploaded doc__* files (same order as multer files for this submit). visibility defaults to PRIVATE when omitted.',
+    example: '[{"requirementId":"uuid","visibility":"PRIVATE"}]',
+  })
+  @IsOptional()
+  @IsString()
+  documentVisibilities?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of { answerId, visibility } to update visibility on existing document answers without re-uploading.',
+    example: '[{"answerId":"uuid","visibility":"PUBLIC"}]',
+  })
+  @IsOptional()
+  @IsString()
+  documentAnswerVisibilities?: string;
 
   @ApiPropertyOptional({
     description:

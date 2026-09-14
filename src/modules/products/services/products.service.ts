@@ -265,6 +265,7 @@ export class ProductsService {
         templateDocumentId: string;
         fileUrl: string;
         fileName: string;
+        visibility: DocumentVisibility;
       }> = [];
 
       for (const templateDoc of template.documents) {
@@ -279,6 +280,7 @@ export class ProductsService {
             templateDocumentId: templateDoc.id,
             fileUrl: prefill.fileUrl,
             fileName: prefill.fileName,
+            visibility: DocumentVisibility.PRIVATE,
           });
         }
       }
@@ -303,6 +305,7 @@ export class ProductsService {
         productRequestId: string;
         templateFieldId: string;
         value: string;
+        visibility: DocumentVisibility;
       }> = [];
 
       for (const templateField of template.fields) {
@@ -325,6 +328,7 @@ export class ProductsService {
           productRequestId: productRequest.id,
           templateFieldId: templateField.id,
           value: clientPrefill.value,
+          visibility: DocumentVisibility.PRIVATE,
         });
       }
 
@@ -378,7 +382,6 @@ export class ProductsService {
           customKey: row.customKey,
           label: row.label,
           level: row.level,
-          visibility: row.visibility,
           documents: row.documents,
         })),
         fieldRequirements: fieldRequirements.map((row) => ({
@@ -387,8 +390,12 @@ export class ProductsService {
           customKey: row.customKey,
           label: row.label,
           level: row.level,
-          visibility: row.visibility,
-          fieldValue: row.fieldValue ? { value: row.fieldValue.value } : null,
+          fieldValue: row.fieldValue
+            ? {
+                value: row.fieldValue.value,
+                visibility: row.fieldValue.visibility,
+              }
+            : null,
         })),
       },
     };
@@ -438,7 +445,6 @@ export class ProductsService {
                   customKey: true,
                   label: true,
                   level: true,
-                  visibility: true,
                 },
               });
             return this.uploadDocumentPrefills(
@@ -707,6 +713,7 @@ export class ProductsService {
         id: string;
         templateFieldId: string;
         value: string;
+        visibility: DocumentVisibility;
       }>;
       organization: {
         settings: { autoApproveProductRequests: boolean } | null;
@@ -719,6 +726,12 @@ export class ProductsService {
     const fieldValues = this.parseFieldValues(dto.fieldValues);
     const removedDocumentAnswerIds = this.parseRemovedDocumentAnswerIds(
       dto.removedDocumentAnswerIds,
+    );
+    const documentVisibilities = this.parseDocumentVisibilities(
+      dto.documentVisibilities,
+    );
+    const documentAnswerVisibilities = this.parseDocumentAnswerVisibilities(
+      dto.documentAnswerVisibilities,
     );
     const docFiles = files.filter((file) => file.fieldname.startsWith('doc__'));
     const templateDocs = product.template.documents;
@@ -753,28 +766,76 @@ export class ProductsService {
       });
     }
 
+    if (documentAnswerVisibilities.length > 0) {
+      const remainingAnswerIds = new Set(
+        product.documentAnswers
+          .filter((row) => !removedDocumentAnswerIds.includes(row.id))
+          .map((row) => row.id),
+      );
+      for (const entry of documentAnswerVisibilities) {
+        if (!remainingAnswerIds.has(entry.answerId)) {
+          throw new BadRequestException(
+            `Unknown document answer for visibility update: ${entry.answerId}`,
+          );
+        }
+      }
+      await Promise.all(
+        documentAnswerVisibilities.map((entry) =>
+          this.prisma.productDocumentAnswer.update({
+            where: { id: entry.answerId },
+            data: { visibility: entry.visibility },
+          }),
+        ),
+      );
+    }
+
     const uploadsToCreate: Array<{
       requirementId: string;
       file: Express.Multer.File;
+      visibility: DocumentVisibility;
     }> = [];
 
-    for (const file of docFiles) {
+    if (
+      documentVisibilities.length > 0 &&
+      documentVisibilities.length !== docFiles.length
+    ) {
+      throw new BadRequestException(
+        'documentVisibilities length must match the number of uploaded doc__ files',
+      );
+    }
+
+    for (let i = 0; i < docFiles.length; i++) {
+      const file = docFiles[i]!;
       const requirementId = file.fieldname.slice('doc__'.length);
       if (!templateDocIds.has(requirementId)) {
         throw new BadRequestException(
           `Unknown document requirement for file field ${file.fieldname}`,
         );
       }
-      uploadsToCreate.push({ requirementId, file });
+      const visibilityEntry = documentVisibilities[i];
+      if (
+        visibilityEntry &&
+        visibilityEntry.requirementId !== requirementId
+      ) {
+        throw new BadRequestException(
+          `documentVisibilities[${i}].requirementId does not match uploaded file field ${file.fieldname}`,
+        );
+      }
+      uploadsToCreate.push({
+        requirementId,
+        file,
+        visibility: visibilityEntry?.visibility ?? DocumentVisibility.PRIVATE,
+      });
     }
 
     const uploadedDocs = await Promise.all(
-      uploadsToCreate.map(async ({ requirementId, file }) => {
+      uploadsToCreate.map(async ({ requirementId, file, visibility }) => {
         const fileUrl = await this.objectStorageService.uploadFile(file);
         return {
           requirementId,
           fileUrl,
           fileName: file.originalname,
+          visibility,
         };
       }),
     );
@@ -786,6 +847,7 @@ export class ProductsService {
           templateDocumentId: row.requirementId,
           fileUrl: row.fileUrl,
           fileName: row.fileName,
+          visibility: row.visibility,
         })),
       });
     }
@@ -828,17 +890,19 @@ export class ProductsService {
       productRequestId: string;
       templateFieldId: string;
       value: string;
+      visibility: DocumentVisibility;
     }> = [];
 
     for (const entry of fieldValues) {
       const value = entry.value?.trim() ?? '';
+      const visibility = entry.visibility;
       const existing = answersByTemplateFieldId.get(entry.requirementId);
 
       if (existing) {
-        if (existing.value !== value) {
+        if (existing.value !== value || existing.visibility !== visibility) {
           await this.prisma.productFieldAnswer.update({
             where: { id: existing.id },
-            data: { value },
+            data: { value, visibility },
           });
         }
       } else if (value) {
@@ -846,6 +910,7 @@ export class ProductsService {
           productRequestId: product.id,
           templateFieldId: entry.requirementId,
           value,
+          visibility,
         });
       }
     }
@@ -1024,7 +1089,6 @@ export class ProductsService {
                 customKey: true,
                 label: true,
                 level: true,
-                visibility: true,
               },
               orderBy: { type: 'asc' },
             },
@@ -1035,7 +1099,6 @@ export class ProductsService {
                 customKey: true,
                 label: true,
                 level: true,
-                visibility: true,
               },
               orderBy: { fieldType: 'asc' },
             },
@@ -1048,6 +1111,7 @@ export class ProductsService {
             fileUrl: true,
             fileName: true,
             uploadedAt: true,
+            visibility: true,
           },
           orderBy: { uploadedAt: 'asc' },
         },
@@ -1055,6 +1119,7 @@ export class ProductsService {
           select: {
             templateFieldId: true,
             value: true,
+            visibility: true,
           },
         },
         organization: { select: { id: true, name: true } },
@@ -1076,6 +1141,7 @@ export class ProductsService {
         id: string;
         fileUrl: string;
         fileName: string | null;
+        visibility: DocumentVisibility;
       }>
     >();
     for (const row of product.documentAnswers) {
@@ -1084,6 +1150,7 @@ export class ProductsService {
         id: row.id,
         fileUrl: row.fileUrl,
         fileName: row.fileName,
+        visibility: row.visibility,
       });
       answersByDocId.set(row.templateDocumentId, list);
     }
@@ -1109,7 +1176,6 @@ export class ProductsService {
           customKey: row.customKey,
           label: row.label,
           level: row.level,
-          visibility: row.visibility,
           documents,
         };
       }),
@@ -1121,8 +1187,9 @@ export class ProductsService {
           customKey: row.customKey,
           label: row.label,
           level: row.level,
-          visibility: row.visibility,
-          fieldValue: answer ? { value: answer.value } : null,
+          fieldValue: answer
+            ? { value: answer.value, visibility: answer.visibility }
+            : null,
         };
       }),
     };
@@ -1160,14 +1227,12 @@ export class ProductsService {
     customKey: string;
     label: string | null;
     level: RequirementLevel;
-    visibility: DocumentVisibility;
   }): DocumentRequirementDto {
     return {
       type: row.type,
       customKey: row.customKey,
       label: row.label ?? undefined,
       level: row.level,
-      visibility: row.visibility,
     };
   }
 
@@ -1176,14 +1241,12 @@ export class ProductsService {
     customKey: string;
     label: string | null;
     level: RequirementLevel;
-    visibility: DocumentVisibility;
   }): FieldRequirementDto {
     return {
       fieldType: row.fieldType,
       customKey: row.customKey,
       label: row.label ?? undefined,
       level: row.level,
-      visibility: row.visibility,
     };
   }
 
@@ -1246,6 +1309,7 @@ export class ProductsService {
       templateDocumentId: string;
       fileUrl: string;
       fileName: string;
+      visibility: DocumentVisibility;
     }> = [];
 
     for (const templateDoc of existing.template.documents) {
@@ -1259,6 +1323,7 @@ export class ProductsService {
           templateDocumentId: templateDoc.id,
           fileUrl: prefill.fileUrl,
           fileName: prefill.fileName,
+          visibility: DocumentVisibility.PRIVATE,
         });
       }
     }
@@ -1271,6 +1336,7 @@ export class ProductsService {
       productRequestId: string;
       templateFieldId: string;
       value: string;
+      visibility: DocumentVisibility;
     }> = [];
 
     for (const row of fieldRequirements) {
@@ -1298,6 +1364,7 @@ export class ProductsService {
           productRequestId,
           templateFieldId: templateField.id,
           value,
+          visibility: DocumentVisibility.PRIVATE,
         });
       }
     }
@@ -1334,7 +1401,11 @@ export class ProductsService {
 
   private parseFieldValues(
     raw?: string,
-  ): Array<{ requirementId: string; value: string }> {
+  ): Array<{
+    requirementId: string;
+    value: string;
+    visibility: DocumentVisibility;
+  }> {
     if (!raw?.trim()) {
       return [];
     }
@@ -1342,6 +1413,7 @@ export class ProductsService {
       const parsed = JSON.parse(raw) as Array<{
         requirementId?: string;
         value?: string;
+        visibility?: string;
       }>;
       if (!Array.isArray(parsed)) {
         throw new Error('Invalid fieldValues');
@@ -1351,10 +1423,99 @@ export class ProductsService {
         .map((row) => ({
           requirementId: row.requirementId!,
           value: typeof row.value === 'string' ? row.value : '',
+          visibility: this.parseVisibility(row.visibility),
         }));
-    } catch {
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('fieldValues must be a valid JSON array');
     }
+  }
+
+  private parseDocumentVisibilities(
+    raw?: string,
+  ): Array<{ requirementId: string; visibility: DocumentVisibility }> {
+    if (!raw?.trim()) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<{
+        requirementId?: string;
+        visibility?: string;
+      }>;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid documentVisibilities');
+      }
+      return parsed.map((row, index) => {
+        if (typeof row.requirementId !== 'string') {
+          throw new BadRequestException(
+            `documentVisibilities[${index}].requirementId is required`,
+          );
+        }
+        return {
+          requirementId: row.requirementId,
+          visibility: this.parseVisibility(row.visibility),
+        };
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'documentVisibilities must be a valid JSON array',
+      );
+    }
+  }
+
+  private parseDocumentAnswerVisibilities(
+    raw?: string,
+  ): Array<{ answerId: string; visibility: DocumentVisibility }> {
+    if (!raw?.trim()) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<{
+        answerId?: string;
+        visibility?: string;
+      }>;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid documentAnswerVisibilities');
+      }
+      return parsed.map((row, index) => {
+        if (typeof row.answerId !== 'string') {
+          throw new BadRequestException(
+            `documentAnswerVisibilities[${index}].answerId is required`,
+          );
+        }
+        return {
+          answerId: row.answerId,
+          visibility: this.parseVisibility(row.visibility),
+        };
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'documentAnswerVisibilities must be a valid JSON array',
+      );
+    }
+  }
+
+  private parseVisibility(raw?: string): DocumentVisibility {
+    if (raw == null || raw === '') {
+      return DocumentVisibility.PRIVATE;
+    }
+    if (
+      raw === DocumentVisibility.PUBLIC ||
+      raw === DocumentVisibility.PRIVATE
+    ) {
+      return raw;
+    }
+    throw new BadRequestException(
+      `visibility must be one of: ${DocumentVisibility.PUBLIC}, ${DocumentVisibility.PRIVATE}`,
+    );
   }
 
   private parseRemovedDocumentAnswerIds(raw?: string): string[] {

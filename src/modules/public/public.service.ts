@@ -29,7 +29,6 @@ export class PublicService {
         template: {
           select: {
             documents: {
-              where: { visibility: DocumentVisibility.PUBLIC },
               select: {
                 id: true,
                 type: true,
@@ -38,7 +37,6 @@ export class PublicService {
               },
             },
             fields: {
-              where: { visibility: DocumentVisibility.PUBLIC },
               select: {
                 id: true,
                 fieldType: true,
@@ -49,6 +47,7 @@ export class PublicService {
           },
         },
         documentAnswers: {
+          where: { visibility: DocumentVisibility.PUBLIC },
           select: {
             id: true,
             templateDocumentId: true,
@@ -57,6 +56,7 @@ export class PublicService {
           },
         },
         fieldAnswers: {
+          where: { visibility: DocumentVisibility.PUBLIC },
           select: {
             templateFieldId: true,
             value: true,

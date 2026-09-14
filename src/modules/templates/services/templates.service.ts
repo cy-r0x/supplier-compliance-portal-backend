@@ -261,7 +261,6 @@ export class TemplatesService {
               data: {
                 label: row.label,
                 level: row.level,
-                visibility: row.visibility,
               },
             });
           } else {
@@ -303,7 +302,6 @@ export class TemplatesService {
               data: {
                 label: row.label,
                 level: row.level,
-                visibility: row.visibility,
               },
             });
           } else {
@@ -429,7 +427,6 @@ export class TemplatesService {
         customKey: row.customKey,
         label: row.label,
         level: row.level,
-        visibility: row.visibility,
       })),
       fields: template.fields.map((row) => ({
         id: row.id,
@@ -437,7 +434,6 @@ export class TemplatesService {
         customKey: row.customKey,
         label: row.label,
         level: row.level,
-        visibility: row.visibility,
       })),
     };
   }
@@ -449,7 +445,6 @@ export class TemplatesService {
       customKey: isOther ? row.customKey!.trim() : '',
       label: isOther ? row.label!.trim() : (row.label?.trim() ?? null),
       level: row.level,
-      visibility: row.visibility,
     };
   }
 
@@ -460,7 +455,6 @@ export class TemplatesService {
       customKey: isOther ? row.customKey!.trim() : '',
       label: isOther ? row.label!.trim() : (row.label?.trim() ?? null),
       level: row.level,
-      visibility: row.visibility,
     };
   }
 
@@ -507,28 +501,24 @@ export class TemplatesService {
       customKey: string;
       label: string | null;
       level: string;
-      visibility: string;
     }>,
     existingFields: Array<{
       fieldType: FieldType;
       customKey: string;
       label: string | null;
       level: string;
-      visibility: string;
     }>,
     desiredDocs: Array<{
       type: DocumentType;
       customKey: string;
       label: string | null;
       level: string;
-      visibility: string;
     }>,
     desiredFields: Array<{
       fieldType: FieldType;
       customKey: string;
       label: string | null;
       level: string;
-      visibility: string;
     }>,
   ): boolean {
     const serializeDocs = (
@@ -537,7 +527,6 @@ export class TemplatesService {
         customKey: string;
         label: string | null;
         level: string;
-        visibility: string;
       }>,
     ) =>
       JSON.stringify(
@@ -547,8 +536,7 @@ export class TemplatesService {
             customKey: row.customKey,
             label: row.label,
             level: row.level,
-            visibility: row.visibility,
-          }))
+              }))
           .sort((a, b) =>
             `${a.type}::${a.customKey}`.localeCompare(
               `${b.type}::${b.customKey}`,
@@ -562,7 +550,6 @@ export class TemplatesService {
         customKey: string;
         label: string | null;
         level: string;
-        visibility: string;
       }>,
     ) =>
       JSON.stringify(
@@ -572,8 +559,7 @@ export class TemplatesService {
             customKey: row.customKey,
             label: row.label,
             level: row.level,
-            visibility: row.visibility,
-          }))
+              }))
           .sort((a, b) =>
             `${a.fieldType}::${a.customKey}`.localeCompare(
               `${b.fieldType}::${b.customKey}`,

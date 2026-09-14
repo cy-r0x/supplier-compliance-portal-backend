@@ -253,8 +253,7 @@ model RequirementTemplateDocument {
   customKey String       @default("")
   label     String?
 
-  level      RequirementLevel
-  visibility DocumentVisibility
+  level RequirementLevel
 
   answers ProductDocumentAnswer[]
 
@@ -272,11 +271,10 @@ model RequirementTemplateField {
   templateId String
   template   RequirementTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  fieldType  FieldType
-  customKey  String             @default("")
-  label      String?
-  level      RequirementLevel
-  visibility DocumentVisibility
+  fieldType FieldType
+  customKey String    @default("")
+  label     String?
+  level     RequirementLevel
 
   answers ProductFieldAnswer[]
 
@@ -298,8 +296,9 @@ model ProductDocumentAnswer {
   templateDocumentId String
   templateDocument   RequirementTemplateDocument @relation(fields: [templateDocumentId], references: [id], onDelete: Restrict)
 
-  fileUrl  String
-  fileName String?
+  fileUrl    String
+  fileName   String?
+  visibility DocumentVisibility @default(PRIVATE)
 
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -319,7 +318,8 @@ model ProductFieldAnswer {
   templateFieldId String
   templateField   RequirementTemplateField @relation(fields: [templateFieldId], references: [id], onDelete: Restrict)
 
-  value String
+  value      String
+  visibility DocumentVisibility @default(PRIVATE)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

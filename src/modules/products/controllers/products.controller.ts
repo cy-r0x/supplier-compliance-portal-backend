@@ -21,7 +21,6 @@ import {
 } from '@nestjs/swagger';
 import {
   DocumentType,
-  DocumentVisibility,
   FieldType,
   RequirementLevel,
   Role,
@@ -93,12 +92,10 @@ export class ProductsController {
             {
               type: DocumentType.TEST_REPORT,
               level: RequirementLevel.REQUIRED,
-              visibility: DocumentVisibility.PRIVATE,
             },
             {
               type: DocumentType.PRODUCT_IMAGE,
               level: RequirementLevel.OPTIONAL,
-              visibility: DocumentVisibility.PUBLIC,
             },
           ]),
         },
@@ -110,7 +107,6 @@ export class ProductsController {
             {
               fieldType: FieldType.SAFETY_NOTICE_TEXT,
               level: RequirementLevel.REQUIRED,
-              visibility: DocumentVisibility.PUBLIC,
               prefill: { value: 'Keep away from children under 3.' },
             },
           ]),
@@ -184,7 +180,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Submit compliance documents and fields',
     description:
-      'Files: doc__{requirementId} (multiple files per requirement allowed). Body: fieldValues JSON array; removedDocumentAnswerIds JSON array of existing answer IDs to delete.',
+      'Files: doc__{requirementId} (multiple files per requirement allowed). Body: fieldValues JSON ({ requirementId, value, visibility }); documentVisibilities JSON aligned with uploads; documentAnswerVisibilities JSON for existing files; removedDocumentAnswerIds JSON array.',
   })
   submit(
     @Param('id', ParseUUIDPipe) id: string,
