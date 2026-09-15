@@ -161,6 +161,19 @@ model OrganizationSettings {
   @@map("organization_settings")
 }
 
+/// Global platform config (SUPER_ADMIN). Singleton row id = "default".
+model PlatformSettings {
+  id String @id @default("default")
+
+  sealApprovedUrl  String?
+  sealSubmittedUrl String?
+  sealRejectedUrl  String?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
 model RefreshToken {
   id                String    @id @default(uuid())
   tokenHash         String    @unique

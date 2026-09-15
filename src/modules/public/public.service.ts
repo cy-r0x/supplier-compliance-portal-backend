@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DocumentVisibility, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { PlatformService } from '../platform/services/platform.service';
 
 const PUBLIC_STATUSES: ProductStatus[] = [
   ProductStatus.SUBMITTED,
@@ -10,7 +11,10 @@ const PUBLIC_STATUSES: ProductStatus[] = [
 
 @Injectable()
 export class PublicService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly platformService: PlatformService,
+  ) {}
 
   async getPublicData(publicSlugOrId: string) {
     const product = await this.prisma.productRequest.findFirst({
@@ -21,11 +25,13 @@ export class PublicService {
       },
       select: {
         name: true,
+        sku: true,
         status: true,
         submittedAt: true,
         reviewedAt: true,
         rejectionReason: true,
         supplier: { select: { name: true } },
+        organization: { select: { name: true } },
         template: {
           select: {
             documents: {
@@ -112,12 +118,19 @@ export class PublicService {
       })
       .filter((row): row is NonNullable<typeof row> => row != null);
 
+    const sealImageUrl = await this.platformService.resolveSealImageUrl(
+      product.status,
+    );
+
     return {
       message: 'Public product retrieved successfully',
       data: {
         name: product.name,
+        sku: product.sku,
         status: product.status,
         supplierName: product.supplier.name,
+        organizationName: product.organization.name,
+        sealImageUrl,
         submittedAt: product.submittedAt,
         reviewedAt: product.reviewedAt,
         rejectionReason: product.rejectionReason,
