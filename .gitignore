@@ -50,7 +50,9 @@ lerna-debug.log*
 /_frontend
 .tmp-frontend
 .frontend-git
+frontend.git
 fe.tar.gz
+.git-template-empty
 
 # Runtime data
 pids
