@@ -57,6 +57,12 @@ enum DocumentVisibility {
   PRIVATE
 }
 
+enum DocumentAiProvider {
+  NONE
+  GEMINI
+  OPENAI
+}
+
 enum NotificationType {
   REQUEST_CREATED
   REQUEST_SUBMITTED
@@ -154,6 +160,14 @@ model OrganizationSettings {
 
   /// When true, valid supplier submit auto-sets request to APPROVED
   autoApproveProductRequests Boolean @default(false)
+
+  /// LLM provider used for bulk document type/visibility suggestions
+  documentAiProvider DocumentAiProvider @default(NONE)
+  /// Must be one of the server allowlisted models for the selected provider
+  documentAiModel    String?
+  /// AES-256-GCM ciphertext (never returned to clients)
+  geminiApiKeyEncrypted String?
+  openaiApiKeyEncrypted String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

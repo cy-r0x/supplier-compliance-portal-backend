@@ -1,13 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { OrganizationMemberRole } from '@prisma/client';
+import { DocumentAiProvider, OrganizationMemberRole } from '@prisma/client';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateOrganizationDto {
@@ -63,5 +66,40 @@ export class UpdateOrganizationMemberDto {
 export class UpdateOrganizationSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()
+  @IsBoolean()
   autoApproveProductRequests?: boolean;
+
+  @ApiPropertyOptional({ enum: DocumentAiProvider })
+  @IsOptional()
+  @IsEnum(DocumentAiProvider)
+  documentAiProvider?: DocumentAiProvider;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(128)
+  documentAiModel?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Gemini API key. Omit to keep; empty string or null to clear; new value to replace.',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(512)
+  geminiApiKey?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'OpenAI API key. Omit to keep; empty string or null to clear; new value to replace.',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(512)
+  openaiApiKey?: string | null;
 }

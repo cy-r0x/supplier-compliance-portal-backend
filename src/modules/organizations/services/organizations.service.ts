@@ -19,6 +19,19 @@ import {
   UpdateOrganizationMemberDto,
   UpdateOrganizationSettingsDto,
 } from '../dto/organization.dto';
+import {
+  buildOrgAiSettingsCreate,
+  buildOrgAiSettingsUpdate,
+} from '../utils/org-ai-settings.util';
+import { toPublicOrgSettings } from '../utils/org-settings.mapper';
+
+const AI_SETTINGS_SELECT = {
+  autoApproveProductRequests: true,
+  documentAiProvider: true,
+  documentAiModel: true,
+  geminiApiKeyEncrypted: true,
+  openaiApiKeyEncrypted: true,
+} as const;
 
 @Injectable()
 export class OrganizationsService {
@@ -344,9 +357,7 @@ export class OrganizationsService {
     const settings = await this.ensureOrgSettings(organizationId);
     return {
       message: 'Organization settings retrieved successfully',
-      data: {
-        autoApproveProductRequests: settings.autoApproveProductRequests,
-      },
+      data: toPublicOrgSettings(settings),
     };
   }
 
@@ -363,24 +374,24 @@ export class OrganizationsService {
       await this.orgAccess.requireManager(currentUser);
     }
 
+    const current = await this.ensureOrgSettings(organizationId);
+    const aiUpdate = buildOrgAiSettingsUpdate(dto, current);
+
     const settings = await this.prisma.organizationSettings.upsert({
       where: { organizationId },
       update: {
         ...(dto.autoApproveProductRequests !== undefined
           ? { autoApproveProductRequests: dto.autoApproveProductRequests }
           : {}),
+        ...aiUpdate,
       },
-      create: {
-        organizationId,
-        autoApproveProductRequests: dto.autoApproveProductRequests ?? false,
-      },
+      create: buildOrgAiSettingsCreate(organizationId, dto),
+      select: AI_SETTINGS_SELECT,
     });
 
     return {
       message: 'Organization settings updated successfully',
-      data: {
-        autoApproveProductRequests: settings.autoApproveProductRequests,
-      },
+      data: toPublicOrgSettings(settings),
     };
   }
 
@@ -461,6 +472,7 @@ export class OrganizationsService {
       where: { organizationId },
       update: {},
       create: { organizationId },
+      select: AI_SETTINGS_SELECT,
     });
   }
 

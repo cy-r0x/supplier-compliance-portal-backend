@@ -16,14 +16,24 @@ import { SettingsService } from '../services/settings.service';
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
 
+  @Get('ai-models')
+  @ApiOperation({
+    summary: 'List allowlisted document-AI models',
+    description:
+      'Curated Gemini and OpenAI models available for organization document suggestion settings.',
+  })
+  listAiModels() {
+    return this.settingsService.listAiModels();
+  }
+
   @Get()
-  @ApiOperation({ summary: 'Get current user settings' })
+  @ApiOperation({ summary: 'Get current organization settings (manager)' })
   getMine(@CurrentUser() currentUser: JwtPayload) {
     return this.settingsService.getMine(currentUser);
   }
 
   @Patch()
-  @ApiOperation({ summary: 'Update current user settings' })
+  @ApiOperation({ summary: 'Update current organization settings (manager)' })
   updateMine(
     @CurrentUser() currentUser: JwtPayload,
     @Body() dto: UpdateSettingsDto,

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DocumentAiProvider,
   DocumentType,
   DocumentVisibility,
   FieldType,
@@ -20,6 +21,7 @@ import {
   parseSortQuery,
 } from '../../../common/utils/query.util';
 import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload';
+import { DocumentAiService } from '../../../infrastructure/document-ai/document-ai.service';
 import { ObjectStorageService } from '../../../infrastructure/object-storage/services/object-storage.service';
 import { OrgAccessService } from '../../../infrastructure/org-access/org-access.service';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
@@ -31,6 +33,7 @@ import {
 } from '../dto/create-product-request.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { RejectProductDto } from '../dto/reject-product.dto';
+import { SuggestBulkDocumentsDto } from '../dto/suggest-bulk-documents.dto';
 import { SubmitProductDto } from '../dto/submit-product.dto';
 import { UpdateProductRequestDto } from '../dto/update-product-request.dto';
 import { parseDocumentPrefillFieldName } from '../utils/document-prefill-field.util';
@@ -50,6 +53,7 @@ export class ProductsService {
     private readonly objectStorageService: ObjectStorageService,
     private readonly templatesService: TemplatesService,
     private readonly orgAccess: OrgAccessService,
+    private readonly documentAiService: DocumentAiService,
   ) {}
 
   async findAll(currentUser: JwtPayload, query: ListProductsQueryDto) {
@@ -616,6 +620,81 @@ export class ProductsService {
     });
 
     return { message: 'Product deleted successfully', data: null };
+  }
+
+  async suggestBulkDocuments(
+    id: string,
+    dto: SuggestBulkDocumentsDto,
+    currentUser: JwtPayload,
+  ) {
+    const product = await this.prisma.productRequest.findFirst({
+      where: { id, isDeleted: false },
+      include: {
+        template: {
+          include: {
+            documents: {
+              select: {
+                id: true,
+                type: true,
+                label: true,
+                level: true,
+                customKey: true,
+              },
+            },
+          },
+        },
+        organization: {
+          select: {
+            settings: {
+              select: {
+                documentAiProvider: true,
+                documentAiModel: true,
+                geminiApiKeyEncrypted: true,
+                openaiApiKeyEncrypted: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    if (product.supplierId !== currentUser.sub) {
+      throw new ForbiddenException(
+        'Only the assigned supplier can request document suggestions',
+      );
+    }
+
+    if (product.status !== ProductStatus.PENDING) {
+      throw new BadRequestException(
+        'Document suggestions are only available for PENDING requests',
+      );
+    }
+
+    if (!product.template) {
+      throw new BadRequestException('Product request is missing a template');
+    }
+
+    const orgSettings = product.organization.settings ?? {
+      documentAiProvider: DocumentAiProvider.NONE,
+      documentAiModel: null,
+      geminiApiKeyEncrypted: null,
+      openaiApiKeyEncrypted: null,
+    };
+
+    const suggestions = await this.documentAiService.suggestDocuments({
+      orgSettings,
+      requirements: product.template.documents,
+      files: dto.files,
+    });
+
+    return {
+      message: 'Document suggestions generated successfully',
+      data: { suggestions },
+    };
   }
 
   async submit(

@@ -5,6 +5,7 @@
     "test",
     "dist",
     "**/*spec.ts",
-    "generated"
+    "generated",
+    "_frontend"
   ]
 }

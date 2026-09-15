@@ -47,6 +47,10 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+/_frontend
+.tmp-frontend
+.frontend-git
+fe.tar.gz
 
 # Runtime data
 pids

@@ -33,6 +33,7 @@ import type { JwtPayload } from '../../../infrastructure/auth/types/jwt-payload'
 import { CreateProductRequestDto } from '../dto/create-product-request.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { RejectProductDto } from '../dto/reject-product.dto';
+import { SuggestBulkDocumentsDto } from '../dto/suggest-bulk-documents.dto';
 import { SubmitProductDto } from '../dto/submit-product.dto';
 import { UpdateProductRequestDto } from '../dto/update-product-request.dto';
 import { ProductsService } from '../services/products.service';
@@ -167,6 +168,21 @@ export class ProductsController {
     @CurrentUser() currentUser: JwtPayload,
   ) {
     return this.productsService.remove(id, currentUser);
+  }
+
+  @Post(':id/documents/suggest-bulk')
+  @Roles(Role.SUPPLIER)
+  @ApiOperation({
+    summary: 'Suggest document type and visibility for bulk upload',
+    description:
+      'Uses the product organization AI settings (Gemini or OpenAI). Sends file metadata only — no file bytes. Falls back to heuristic matching when AI is not configured.',
+  })
+  suggestBulkDocuments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SuggestBulkDocumentsDto,
+    @CurrentUser() currentUser: JwtPayload,
+  ) {
+    return this.productsService.suggestBulkDocuments(id, dto, currentUser);
   }
 
   @Post(':id/submit')
