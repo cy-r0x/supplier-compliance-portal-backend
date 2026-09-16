@@ -284,7 +284,7 @@ export class ProductsService {
             templateDocumentId: templateDoc.id,
             fileUrl: prefill.fileUrl,
             fileName: prefill.fileName,
-            visibility: DocumentVisibility.PRIVATE,
+            visibility: this.defaultDocumentVisibility(templateDoc.type),
           });
         }
       }
@@ -900,10 +900,13 @@ export class ProductsService {
           `documentVisibilities[${i}].requirementId does not match uploaded file field ${file.fieldname}`,
         );
       }
+      const templateDoc = templateDocs.find((row) => row.id === requirementId);
       uploadsToCreate.push({
         requirementId,
         file,
-        visibility: visibilityEntry?.visibility ?? DocumentVisibility.PRIVATE,
+        visibility:
+          visibilityEntry?.visibility ??
+          this.defaultDocumentVisibility(templateDoc?.type),
       });
     }
 
@@ -1402,7 +1405,7 @@ export class ProductsService {
           templateDocumentId: templateDoc.id,
           fileUrl: prefill.fileUrl,
           fileName: prefill.fileName,
-          visibility: DocumentVisibility.PRIVATE,
+          visibility: this.defaultDocumentVisibility(templateDoc.type),
         });
       }
     }
@@ -1642,6 +1645,18 @@ export class ProductsService {
     const percent = total === 0 ? 100 : Math.round((completed / total) * 100);
 
     return { completed, total, percent };
+  }
+
+  private defaultDocumentVisibility(
+    type: DocumentType | undefined,
+  ): DocumentVisibility {
+    if (
+      type === DocumentType.PRODUCT_IMAGE ||
+      type === DocumentType.SAFETY_IMAGE
+    ) {
+      return DocumentVisibility.PUBLIC;
+    }
+    return DocumentVisibility.PRIVATE;
   }
 
   private assertRequirementKeys(
