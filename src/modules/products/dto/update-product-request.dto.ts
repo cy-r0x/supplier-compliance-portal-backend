@@ -67,4 +67,22 @@ export class UpdateProductRequestDto {
   @IsOptional()
   @IsString()
   removedDocumentAnswerIds?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of { visibility } aligned with uploaded docPrefill__* files (same order as multer files).',
+    example: '[{"visibility":"PUBLIC"}]',
+  })
+  @IsOptional()
+  @IsString()
+  documentPrefillVisibilities?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of { answerId, visibility } to update visibility on existing prefilled document answers.',
+    example: '[{"answerId":"uuid","visibility":"PUBLIC"}]',
+  })
+  @IsOptional()
+  @IsString()
+  documentAnswerVisibilities?: string;
 }

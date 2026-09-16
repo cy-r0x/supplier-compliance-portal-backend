@@ -246,7 +246,11 @@ export class ProductsService {
       photo
         ? this.objectStorageService.uploadFile(photo)
         : Promise.resolve(null as string | null),
-      this.uploadDocumentPrefills(documentRequirements, docPrefillFiles),
+      this.uploadDocumentPrefills(
+        documentRequirements,
+        docPrefillFiles,
+        this.parsePrefillVisibilities(dto.documentPrefillVisibilities),
+      ),
     ]);
 
     await this.prisma.$transaction(async (tx) => {
@@ -284,7 +288,7 @@ export class ProductsService {
             templateDocumentId: templateDoc.id,
             fileUrl: prefill.fileUrl,
             fileName: prefill.fileName,
-            visibility: this.defaultDocumentVisibility(templateDoc.type),
+            visibility: prefill.visibility,
           });
         }
       }
@@ -332,7 +336,10 @@ export class ProductsService {
           productRequestId: productRequest.id,
           templateFieldId: templateField.id,
           value: clientPrefill.value,
-          visibility: DocumentVisibility.PRIVATE,
+          visibility:
+            clientPrefill.visibility === DocumentVisibility.PUBLIC
+              ? DocumentVisibility.PUBLIC
+              : DocumentVisibility.PRIVATE,
         });
       }
 
@@ -454,10 +461,18 @@ export class ProductsService {
             return this.uploadDocumentPrefills(
               templateDocs.map((row) => this.templateDocToRequirementDto(row)),
               files.filter((file) => file.fieldname.startsWith('docPrefill__')),
+              this.parsePrefillVisibilities(dto.documentPrefillVisibilities),
             );
           })()
         : Promise.resolve(
-            new Map<string, Array<{ fileUrl: string; fileName: string }>>(),
+            new Map<
+              string,
+              Array<{
+                fileUrl: string;
+                fileName: string;
+                visibility: DocumentVisibility;
+              }>
+            >(),
           ),
       hasPrefillUpdate
         ? this.prisma.productRequest.findUnique({
@@ -492,6 +507,7 @@ export class ProductsService {
                   id: true,
                   templateFieldId: true,
                   value: true,
+                  visibility: true,
                 },
               },
             },
@@ -529,6 +545,9 @@ export class ProductsService {
             uploadedPrefills,
             dto.fieldRequirements ?? [],
             this.parseRemovedDocumentAnswerIds(dto.removedDocumentAnswerIds),
+            this.parseDocumentAnswerVisibilities(
+              dto.documentAnswerVisibilities,
+            ),
           );
         }
 
@@ -551,10 +570,24 @@ export class ProductsService {
   private async uploadDocumentPrefills(
     documentRequirements: DocumentRequirementDto[],
     docPrefillFiles: Express.Multer.File[],
+    prefillVisibilities: DocumentVisibility[] = [],
   ) {
-    const prefillByRequirementKey = new Map<string, Express.Multer.File[]>();
+    if (
+      prefillVisibilities.length > 0 &&
+      prefillVisibilities.length !== docPrefillFiles.length
+    ) {
+      throw new BadRequestException(
+        'documentPrefillVisibilities length must match the number of uploaded docPrefill__ files',
+      );
+    }
 
-    for (const file of docPrefillFiles) {
+    const prefillByRequirementKey = new Map<
+      string,
+      Array<{ file: Express.Multer.File; visibility: DocumentVisibility }>
+    >();
+
+    for (let index = 0; index < docPrefillFiles.length; index++) {
+      const file = docPrefillFiles[index]!;
       const parsed = parseDocumentPrefillFieldName(file.fieldname);
       if (!parsed) {
         throw new BadRequestException(
@@ -576,16 +609,22 @@ export class ProductsService {
 
       const key = `${parsed.type}::${parsed.customKey}`;
       const bucket = prefillByRequirementKey.get(key) ?? [];
-      bucket.push(file);
+      bucket.push({
+        file,
+        visibility:
+          prefillVisibilities[index] ??
+          this.defaultDocumentVisibility(parsed.type as DocumentType),
+      });
       prefillByRequirementKey.set(key, bucket);
     }
 
     const uploadedEntries = await Promise.all(
       [...prefillByRequirementKey.entries()].map(async ([key, files]) => {
         const uploaded = await Promise.all(
-          files.map(async (file) => ({
+          files.map(async ({ file, visibility }) => ({
             fileUrl: await this.objectStorageService.uploadFile(file),
             fileName: file.originalname,
+            visibility,
           })),
         );
         return [key, uploaded] as const;
@@ -1356,14 +1395,23 @@ export class ProductsService {
         id: string;
         templateFieldId: string;
         value: string;
+        visibility: DocumentVisibility;
       }>;
     },
     uploadedPrefills: Map<
       string,
-      Array<{ fileUrl: string; fileName: string }>
+      Array<{
+        fileUrl: string;
+        fileName: string;
+        visibility: DocumentVisibility;
+      }>
     >,
     fieldRequirements: FieldRequirementDto[],
     removedDocumentAnswerIds: string[] = [],
+    documentAnswerVisibilities: Array<{
+      answerId: string;
+      visibility: DocumentVisibility;
+    }> = [],
   ) {
     const answersByFieldId = new Map(
       existing.fieldAnswers.map((row) => [row.templateFieldId, row]),
@@ -1386,6 +1434,25 @@ export class ProductsService {
       });
     }
 
+    if (documentAnswerVisibilities.length > 0) {
+      const remainingIds = new Set(
+        existing.documentAnswers
+          .filter((row) => !removedDocumentAnswerIds.includes(row.id))
+          .map((row) => row.id),
+      );
+      for (const entry of documentAnswerVisibilities) {
+        if (!remainingIds.has(entry.answerId)) {
+          throw new BadRequestException(
+            `Unknown document answer for visibility update: ${entry.answerId}`,
+          );
+        }
+        await tx.productDocumentAnswer.update({
+          where: { id: entry.answerId },
+          data: { visibility: entry.visibility },
+        });
+      }
+    }
+
     const documentsToCreate: Array<{
       productRequestId: string;
       templateDocumentId: string;
@@ -1405,7 +1472,7 @@ export class ProductsService {
           templateDocumentId: templateDoc.id,
           fileUrl: prefill.fileUrl,
           fileName: prefill.fileName,
-          visibility: this.defaultDocumentVisibility(templateDoc.type),
+          visibility: prefill.visibility,
         });
       }
     }
@@ -1433,12 +1500,20 @@ export class ProductsService {
       const value = row.prefill?.value;
       if (value === undefined) continue;
 
+      const visibility =
+        row.prefill?.visibility === DocumentVisibility.PUBLIC
+          ? DocumentVisibility.PUBLIC
+          : DocumentVisibility.PRIVATE;
+
       const existingAnswer = answersByFieldId.get(templateField.id);
       if (existingAnswer) {
-        if (existingAnswer.value !== value) {
+        if (
+          existingAnswer.value !== value ||
+          existingAnswer.visibility !== visibility
+        ) {
           await tx.productFieldAnswer.update({
             where: { id: existingAnswer.id },
-            data: { value },
+            data: { value, visibility },
           });
         }
       } else if (value.trim()) {
@@ -1446,7 +1521,7 @@ export class ProductsService {
           productRequestId,
           templateFieldId: templateField.id,
           value,
-          visibility: DocumentVisibility.PRIVATE,
+          visibility,
         });
       }
     }
@@ -1546,6 +1621,26 @@ export class ProductsService {
       }
       throw new BadRequestException(
         'documentVisibilities must be a valid JSON array',
+      );
+    }
+  }
+
+  private parsePrefillVisibilities(raw?: string): DocumentVisibility[] {
+    if (!raw?.trim()) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<{ visibility?: string }>;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid documentPrefillVisibilities');
+      }
+      return parsed.map((row) => this.parseVisibility(row?.visibility));
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'documentPrefillVisibilities must be a valid JSON array',
       );
     }
   }

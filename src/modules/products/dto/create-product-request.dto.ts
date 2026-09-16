@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DocumentType,
+  DocumentVisibility,
   FieldType,
   RequirementLevel,
 } from '@prisma/client';
@@ -48,6 +49,15 @@ export class FieldPrefillDto {
   @IsString()
   @MinLength(1)
   value!: string;
+
+  @ApiPropertyOptional({
+    enum: DocumentVisibility,
+    example: DocumentVisibility.PRIVATE,
+    description: 'Answer visibility for this prefilled field. Defaults to PRIVATE.',
+  })
+  @IsOptional()
+  @IsEnum(DocumentVisibility)
+  visibility?: DocumentVisibility;
 }
 
 export class DocumentRequirementDto {
@@ -172,4 +182,13 @@ export class CreateProductRequestDto {
   })
   @IsOptional()
   photo?: Express.Multer.File;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of { visibility } aligned with uploaded docPrefill__* files (same order as multer files). When omitted, PRODUCT_IMAGE/SAFETY_IMAGE default to PUBLIC and others to PRIVATE.',
+    example: '[{"visibility":"PUBLIC"},{"visibility":"PRIVATE"}]',
+  })
+  @IsOptional()
+  @IsString()
+  documentPrefillVisibilities?: string;
 }
